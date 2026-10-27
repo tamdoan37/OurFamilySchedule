@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "OurFamilySchedule",
+    "slug": "our-family-schedule",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ourfamilyschedule.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Capture schedule flyers for AI parsing",
+        "NSCalendarsUsageDescription": "Save parsed events to your calendar"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.ourfamilyschedule.app",
+      "permissions": ["CAMERA", "READ_CALENDAR", "WRITE_CALENDAR"]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-dev-client",
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "Allow camera to scan schedules"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
