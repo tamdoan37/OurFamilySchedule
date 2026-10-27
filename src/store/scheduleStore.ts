@@ -9,10 +9,38 @@ interface ScheduleState {
   setEvents: (events: AppEvent[]) => void;
   addEvent: (event: AppEvent) => void;
   updateEvent: (id: string, patch: Partial<AppEvent>) => void;
+  loadDemoData: () => void;
 }
 
 const ydoc = new Y.Doc();
 const yEvents = ydoc.getArray<AppEvent>('events');
+
+const demoEvents: AppEvent[] = [
+  {
+    id: 'demo1',
+    title: 'Soccer Practice',
+    startTime: new Date(Date.now() + 86400000).toISOString(),
+    endTime: new Date(Date.now() + 86400000 + 5400000).toISOString(),
+    location: 'Field 3',
+    assignedCaregiverId: 'mom',
+  },
+  {
+    id: 'demo2',
+    title: 'Piano Lesson',
+    startTime: new Date(Date.now() + 172800000).toISOString(),
+    endTime: new Date(Date.now() + 172800000 + 2700000).toISOString(),
+    location: 'Music Studio',
+    assignedCaregiverId: 'dad',
+  },
+  {
+    id: 'demo3',
+    title: 'Doctor Appointment',
+    startTime: new Date(Date.now() + 259200000).toISOString(),
+    endTime: new Date(Date.now() + 259200000 + 3600000).toISOString(),
+    location: 'Pediatric Clinic',
+    assignedCaregiverId: null,
+  },
+];
 
 export const useScheduleStore = create<ScheduleState>((set, get) => ({
   events: [],
@@ -33,6 +61,11 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
       yEvents.delete(idx, 1);
       yEvents.insert(idx, [{ ...current, ...patch }]);
     }
+    set({ events: yEvents.toArray() });
+  },
+  loadDemoData: () => {
+    yEvents.delete(0, yEvents.length);
+    yEvents.push(demoEvents);
     set({ events: yEvents.toArray() });
   },
 }));
