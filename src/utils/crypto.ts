@@ -1,3 +1,5 @@
+import { Buffer } from '@craftzdog/react-native-buffer';
+
 type QuickCryptoApi = {
   randomBytes: (size: number) => Uint8Array;
   createCipheriv: (algorithm: string, key: Uint8Array, iv: Uint8Array) => Cipher;

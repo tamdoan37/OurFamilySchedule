@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { createFamily, currentPairingCode, joinFamily, leaveFamily } from '../src/sync/syncEngine';
 import { isRelayUrl, suggestedRelayUrl } from '../src/sync/pairing';
-import { useScheduleStore } from '../src/store/scheduleStore';
+import { eraseLocalFamily, useScheduleStore } from '../src/store/scheduleStore';
 
 export default function SettingsScreen() {
   const paired = useScheduleStore((state) => state.paired);
@@ -53,8 +53,30 @@ export default function SettingsScreen() {
     const trimmed = data.trim();
     if (!trimmed.startsWith('{')) return;
     handled.current = true;
+    const state = useScheduleStore.getState();
+    if (state.caregivers.length > 0 || state.events.length > 0) {
+      setScanning(false);
+      Alert.alert(
+        'Join family',
+        "This phone already has a family set up. Joining will merge it, which can create duplicate people. Erase this phone's family and join, or cancel?",
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => { handled.current = false; } },
+          {
+            text: 'Erase and join',
+            style: 'destructive',
+            onPress: () => { void acceptJoin(trimmed, true); },
+          },
+        ],
+      );
+      return;
+    }
+    await acceptJoin(trimmed, false);
+  }
+
+  async function acceptJoin(raw: string, erase: boolean) {
     try {
-      await joinFamily(trimmed);
+      if (erase) eraseLocalFamily();
+      await joinFamily(raw);
       setScanning(false);
       setCode(null);
       Alert.alert('Joined. If this phone does not already have a person, pick who it belongs to.');

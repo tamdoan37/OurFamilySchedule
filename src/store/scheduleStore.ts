@@ -17,6 +17,7 @@ interface ScheduleState {
   paired: boolean;
   syncStatus: 'synced' | 'syncing' | 'offline';
   syncWaiting: number;
+  syncError: string;
   unsyncedClaimIds: string[];
   ydoc: Y.Doc;
   hydrate: () => Promise<void>;
@@ -62,7 +63,11 @@ type EventPatch = Partial<{
   deleted: boolean;
 }>;
 
-const ydoc = new Y.Doc();
+const ydocHolder: { current: Y.Doc } = { current: new Y.Doc() };
+
+function ydoc() {
+  return ydocHolder.current;
+}
 const SAVE_DELAY_MS = 500;
 
 let persistenceEnabled = false;
@@ -86,15 +91,26 @@ function getDatabase() {
         CREATE TABLE IF NOT EXISTS sync_state (
           id INTEGER PRIMARY KEY NOT NULL,
           last_seq INTEGER NOT NULL,
-          pending_claims TEXT NOT NULL
+          pending_claims TEXT NOT NULL,
+          last_snapshot_at INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS outbox (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           ciphertext TEXT NOT NULL,
           iv TEXT NOT NULL,
-          tag TEXT NOT NULL
+          tag TEXT NOT NULL,
+          snapshot_seq INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS inbound_parts (
+          group_id TEXT NOT NULL,
+          part_index INTEGER NOT NULL,
+          part_count INTEGER NOT NULL,
+          payload BLOB NOT NULL,
+          PRIMARY KEY (group_id, part_index)
         );
       `);
+      await addColumn(db, 'ALTER TABLE sync_state ADD COLUMN last_snapshot_at INTEGER NOT NULL DEFAULT 0');
+      await addColumn(db, 'ALTER TABLE outbox ADD COLUMN snapshot_seq INTEGER');
       return db;
     })();
   }
@@ -105,12 +121,43 @@ export function getScheduleDatabase() {
   return getDatabase();
 }
 
+async function addColumn(db: SQLite.SQLiteDatabase, sql: string) {
+  try {
+    await db.execAsync(sql);
+  } catch {
+    // The column is already there on databases created with the new schema.
+  }
+}
+
 export function applyRemoteUpdate(update: Uint8Array) {
-  Y.applyUpdate(ydoc, update, 'remote');
+  Y.applyUpdate(ydoc(), update, 'remote');
 }
 
 export function encodeSnapshot(): Uint8Array {
-  return Y.encodeStateAsUpdate(ydoc);
+  return Y.encodeStateAsUpdate(ydoc());
+}
+
+export function eraseLocalFamily() {
+  const previous = ydoc();
+  previous.off('update', onDocUpdate);
+  const next = new Y.Doc();
+  next.on('update', onDocUpdate);
+  ydocHolder.current = next;
+  previous.destroy();
+  useScheduleStore.setState({
+    ydoc: next,
+    events: [],
+    caregivers: [],
+    children: [],
+    deviceCaregiverId: '',
+    demoEventIds: [],
+    unsyncedClaimIds: [],
+  });
+  if (database) {
+    database.runSync('DELETE FROM outbox');
+    database.runSync(`UPDATE sync_state SET last_seq = 0, pending_claims = '[]', last_snapshot_at = 0 WHERE id = 1`);
+  }
+  persistNow();
 }
 
 function asUpdate(value: unknown): Uint8Array | null {
@@ -137,7 +184,7 @@ function persistNow() {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
-  const update = Y.encodeStateAsUpdate(ydoc);
+  const update = Y.encodeStateAsUpdate(ydoc());
   const { deviceCaregiverId, demoEventIds } = useScheduleStore.getState();
   database.runSync(
     `INSERT OR REPLACE INTO local_state (id, ydoc, device_caregiver_id, demo_event_ids)
@@ -172,7 +219,7 @@ async function loadPersistedState() {
     if (row) {
       const update = asUpdate(row.ydoc);
       if (!update) throw new Error('Saved calendar could not be read');
-      if (update.byteLength > 0) Y.applyUpdate(ydoc, update, 'load');
+      if (update.byteLength > 0) Y.applyUpdate(ydoc(), update, 'load');
     }
     if (generation !== loadGeneration) return;
     persistenceEnabled = true;
@@ -203,13 +250,13 @@ async function loadPersistedState() {
 }
 
 function eventsMap() {
-  return ydoc.getMap('events');
+  return ydoc().getMap('events');
 }
 function caregiversMap() {
-  return ydoc.getMap('caregivers');
+  return ydoc().getMap('caregivers');
 }
 function childrenMap() {
-  return ydoc.getMap('children');
+  return ydoc().getMap('children');
 }
 
 export function toOffsetISO(date: Date): string {
@@ -308,11 +355,13 @@ function writeEvent(input: NewEvent & { id: string }) {
   eventsMap().set(input.id, map);
 }
 
-ydoc.on('update', (update, origin) => {
+function onDocUpdate(update: Uint8Array, origin: unknown) {
   publish();
   if (origin !== 'load') schedulePersist();
   if (origin !== 'load' && origin !== 'remote') emitLocalUpdate(update);
-});
+}
+
+ydoc().on('update', onDocUpdate);
 
 export const useScheduleStore = create<ScheduleState>((set, get) => ({
   ready: false,
@@ -325,8 +374,9 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   paired: false,
   syncStatus: 'synced',
   syncWaiting: 0,
+  syncError: '',
   unsyncedClaimIds: [],
-  ydoc,
+  ydoc: ydoc(),
   hydrate: () => {
     if (!hydratePromise) hydratePromise = loadPersistedState();
     return hydratePromise;
@@ -342,7 +392,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   },
   addCaregiver: (name, color) => {
     const id = Crypto.randomUUID();
-    ydoc.transact(() => {
+    ydoc().transact(() => {
       const map = new Y.Map<string>();
       map.set('name', name.trim());
       map.set('color', color);
@@ -352,7 +402,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   },
   addChild: (name, color) => {
     const id = Crypto.randomUUID();
-    ydoc.transact(() => {
+    ydoc().transact(() => {
       const map = new Y.Map<string>();
       map.set('name', name.trim());
       map.set('color', color);
@@ -366,7 +416,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   },
   addEvent: (input) => {
     const id = Crypto.randomUUID();
-    ydoc.transact(() => {
+    ydoc().transact(() => {
       writeEvent({ ...input, id });
     });
     set({ demoEventIds: get().demoEventIds.filter((demoId) => demoId !== id) });
@@ -378,7 +428,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
     const fields = (Object.keys(patch) as (keyof EventPatch)[]).filter((field) => patch[field] !== undefined);
     if (fields.length === 0) return;
     const caregiverChanged = patch.caregiverId !== undefined && String(map.get('caregiverId') ?? '') !== patch.caregiverId;
-    ydoc.transact(() => {
+    ydoc().transact(() => {
       for (const field of fields) {
         const value = patch[field];
         if (value === undefined) continue;
@@ -417,7 +467,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
       { title: 'Checkup', icon: '🩺', hours: 72, caregiverId: '', backupCaregiverId: primary.id },
     ];
     const demoEventIds: string[] = [];
-    ydoc.transact(() => {
+    ydoc().transact(() => {
       for (const sample of samples) {
         const id = Crypto.randomUUID();
         demoEventIds.push(id);

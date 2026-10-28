@@ -4,6 +4,7 @@ import { io, Socket } from 'socket.io-client';
 import { encryptDelta, decryptDelta } from '../utils/crypto';
 import { applyRemoteUpdate, encodeSnapshot, getScheduleDatabase, useScheduleStore } from '../store/scheduleStore';
 import { setLocalClaimHandler, setLocalUpdateHandler } from './bridge';
+import { encodeParts, joinParts, readPart } from './frame';
 import {
   bytesToBase64,
   clearPairing,
@@ -19,7 +20,8 @@ type RelayMessage = { seq: number; ciphertext: string; iv: string; tag: string }
 type Session = Pairing & { token: string };
 
 const PAGE = 200;
-const SNAPSHOT_GAP_MS = 2 * 60 * 1000;
+const MANY_UPDATES = 15;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 let session: Session | null = null;
 let socket: Socket | null = null;
@@ -27,7 +29,6 @@ let started = false;
 let chain: Promise<void> = Promise.resolve();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let localCount = 0;
-let lastSnapshotAt = 0;
 const sentIvs = new Set<string>();
 
 export async function prepareSync(): Promise<void> {
@@ -99,6 +100,7 @@ export async function leaveFamily(): Promise<void> {
     useScheduleStore.setState({
       paired: false,
       syncStatus: 'synced',
+      syncError: '',
       syncWaiting: 0,
       unsyncedClaimIds: [],
     });
@@ -113,8 +115,7 @@ export async function currentPairingCode(): Promise<string | null> {
 async function onForeground() {
   if (!session) return;
   await catchUp();
-  const waiting = await outboxCount();
-  if (waiting > 0 || Date.now() - lastSnapshotAt > SNAPSHOT_GAP_MS) await queueSnapshot();
+  if (await snapshotDue()) await queueSnapshot();
   await flush();
 }
 
@@ -143,16 +144,17 @@ async function connect() {
     if (session && useScheduleStore.getState().syncWaiting > 0) setStatus('offline');
   });
   socket.on('connect_error', () => {
-    if (session) setStatus('offline');
+    if (!session) return;
     console.error('Could not reach the relay');
+    setStatus('offline', "Couldn't reach the relay");
   });
   try {
     await catchUp();
-    await queueSnapshot();
+    if (await snapshotDue()) await queueSnapshot();
     await flush();
   } catch (error) {
-    setStatus('offline');
     console.error(error instanceof Error ? error.message : 'Could not sync');
+    setStatus('offline', 'Sync failed');
   }
 }
 
@@ -187,56 +189,141 @@ async function catchUp() {
     }
     if ((await outboxCount()) === 0) setStatus(socket?.connected ? 'synced' : 'offline');
   } catch (error) {
-    setStatus('offline');
     console.error(error instanceof Error ? error.message : 'Could not catch up');
+    setStatus('offline', "Couldn't reach the relay");
   }
 }
 
 async function applyMessage(message: RelayMessage) {
   if (!session || sentIvs.has(message.iv)) return;
+  let plain: Uint8Array;
   try {
-    applyRemoteUpdate(decryptDelta(message, session.familyKey));
+    plain = decryptDelta(message, session.familyKey);
   } catch {
     console.error('Could not decrypt a relay message');
+    setStatus('offline', 'Sync failed');
+    return;
   }
+  const part = readPart(plain);
+  if (!part) {
+    applyRemoteUpdate(plain);
+    return;
+  }
+  if (!part.groupId || part.count < 1 || part.index >= part.count) return;
+  const db = await getScheduleDatabase();
+  db.runSync(
+    'INSERT OR REPLACE INTO inbound_parts (group_id, part_index, part_count, payload) VALUES (?, ?, ?, ?)',
+    part.groupId,
+    part.index,
+    part.count,
+    part.payload,
+  );
+  const rows = db.getAllSync<{ part_index: number; payload: unknown }>(
+    'SELECT part_index, payload FROM inbound_parts WHERE group_id = ? ORDER BY part_index ASC',
+    part.groupId,
+  );
+  if (rows.length < part.count) return;
+  const pieces: Uint8Array[] = [];
+  for (let index = 0; index < part.count; index += 1) {
+    const row = rows.find((item) => item.part_index === index);
+    const payload = asBytes(row?.payload);
+    if (!payload) return;
+    pieces.push(payload);
+  }
+  db.runSync('DELETE FROM inbound_parts WHERE group_id = ?', part.groupId);
+  applyRemoteUpdate(joinParts(pieces));
 }
 
 async function enqueue(update: Uint8Array) {
   if (!session) return;
   localCount += 1;
-  if (localCount >= 15) {
+  if (localCount >= MANY_UPDATES) {
     localCount = 0;
     await queueSnapshot();
     return;
   }
-  await insertEncrypted(update);
+  await insertEncrypted(update, null);
   scheduleFlush();
+}
+
+async function snapshotDue(): Promise<boolean> {
+  const db = await getScheduleDatabase();
+  await ensureSyncRow(db);
+  const waiting = await outboxCount();
+  if (waiting >= MANY_UPDATES) return true;
+  const row = db.getFirstSync<{ last_snapshot_at: number }>('SELECT last_snapshot_at FROM sync_state WHERE id = 1');
+  return Date.now() - (row?.last_snapshot_at ?? 0) >= DAY_MS;
 }
 
 async function queueSnapshot() {
   if (!session) return;
+  const covered = await readCursor();
+  let sealed: { ciphertext: string; iv: string; tag: string; snapshotSeq: number | null }[];
+  try {
+    sealed = encodeParts(encodeSnapshot(), covered).map((part) => ({
+      ...encryptDelta(part.plaintext, session!.familyKey),
+      snapshotSeq: part.snapshotSeq,
+    }));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : 'Could not encrypt');
+    setStatus('offline', 'Sync failed');
+    return;
+  }
+  if (sealed.some((item) => item.ciphertext.length > 350000)) {
+    console.error('A sync message was too large to send');
+    setStatus('offline', 'Sync failed');
+    return;
+  }
   const db = await getScheduleDatabase();
-  db.runSync('DELETE FROM outbox');
-  await insertEncrypted(encodeSnapshot());
-  lastSnapshotAt = Date.now();
+  const marker = db.getFirstSync<{ n: number }>('SELECT COALESCE(MAX(id), 0) AS n FROM outbox');
+  const previousMax = marker?.n ?? 0;
+  for (const item of sealed) {
+    sentIvs.add(item.iv);
+    db.runSync(
+      'INSERT INTO outbox (ciphertext, iv, tag, snapshot_seq) VALUES (?, ?, ?, ?)',
+      item.ciphertext,
+      item.iv,
+      item.tag,
+      item.snapshotSeq,
+    );
+  }
+  db.runSync('DELETE FROM outbox WHERE id <= ?', previousMax);
+  await ensureSyncRow(db);
+  db.runSync('UPDATE sync_state SET last_snapshot_at = ? WHERE id = 1', Date.now());
   localCount = 0;
+  useScheduleStore.setState({ syncWaiting: await outboxCount() });
   scheduleFlush();
 }
 
-async function insertEncrypted(update: Uint8Array) {
+async function insertEncrypted(update: Uint8Array, snapshotSeq: number | null) {
   if (!session) return;
-  const sealed = encryptDelta(update, session.familyKey);
+  const parts = encodeParts(update, snapshotSeq);
+  if (parts.length !== 1) {
+    await queueSnapshot();
+    return;
+  }
+  const part = parts[0];
+  let sealed: { ciphertext: string; iv: string; tag: string };
+  try {
+    sealed = encryptDelta(part.plaintext, session.familyKey);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : 'Could not encrypt');
+    setStatus('offline', 'Sync failed');
+    return;
+  }
   if (sealed.ciphertext.length > 350000) {
     console.error('A sync message was too large to send');
+    setStatus('offline', 'Sync failed');
     return;
   }
   sentIvs.add(sealed.iv);
   const db = await getScheduleDatabase();
   db.runSync(
-    'INSERT INTO outbox (ciphertext, iv, tag) VALUES (?, ?, ?)',
+    'INSERT INTO outbox (ciphertext, iv, tag, snapshot_seq) VALUES (?, ?, ?, ?)',
     sealed.ciphertext,
     sealed.iv,
     sealed.tag,
+    part.snapshotSeq,
   );
   useScheduleStore.setState({ syncWaiting: await outboxCount() });
 }
@@ -255,8 +342,8 @@ async function flush() {
   try {
     while (session) {
       const db = await getScheduleDatabase();
-      const row = db.getFirstSync<{ id: number; ciphertext: string; iv: string; tag: string }>(
-        'SELECT id, ciphertext, iv, tag FROM outbox ORDER BY id ASC LIMIT 1',
+      const row = db.getFirstSync<{ id: number; ciphertext: string; iv: string; tag: string; snapshot_seq: number | null }>(
+        'SELECT id, ciphertext, iv, tag, snapshot_seq FROM outbox ORDER BY id ASC LIMIT 1',
       );
       if (!row) break;
       await push(row);
@@ -267,19 +354,26 @@ async function flush() {
       syncWaiting: waiting,
       unsyncedClaimIds: waiting === 0 ? [] : useScheduleStore.getState().unsyncedClaimIds,
       syncStatus: waiting === 0 ? 'synced' : 'offline',
+      syncError: waiting === 0 ? '' : useScheduleStore.getState().syncError,
     });
     if (waiting === 0) {
       const db = await getScheduleDatabase();
       db.runSync(`UPDATE sync_state SET pending_claims = '[]' WHERE id = 1`);
     }
   } catch (error) {
-    setStatus('offline');
     console.error(error instanceof Error ? error.message : 'Could not send sync');
+    setStatus('offline', 'Sync failed');
   }
 }
 
-async function push(row: { ciphertext: string; iv: string; tag: string }) {
+async function push(row: { ciphertext: string; iv: string; tag: string; snapshot_seq: number | null }) {
   if (!session) return;
+  const body: { ciphertext: string; iv: string; tag: string; snapshotSeq?: number } = {
+    ciphertext: row.ciphertext,
+    iv: row.iv,
+    tag: row.tag,
+  };
+  if (typeof row.snapshot_seq === 'number') body.snapshotSeq = row.snapshot_seq;
   const response = await fetch(`${session.relayUrl}/rooms/${session.roomId}/messages`, {
     method: 'POST',
     redirect: 'error',
@@ -287,7 +381,7 @@ async function push(row: { ciphertext: string; iv: string; tag: string }) {
       Authorization: `Bearer ${session.token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ ciphertext: row.ciphertext, iv: row.iv, tag: row.tag }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error('The relay rejected a message');
 }
@@ -361,12 +455,22 @@ function waitUntilReady() {
   });
 }
 
-function setStatus(syncStatus: 'synced' | 'syncing' | 'offline') {
+function setStatus(syncStatus: 'synced' | 'syncing' | 'offline', syncError = '') {
   if (!useScheduleStore.getState().paired && syncStatus !== 'synced') return;
-  useScheduleStore.setState({ syncStatus });
+  useScheduleStore.setState({
+    syncStatus,
+    syncError: syncStatus === 'offline' ? syncError || useScheduleStore.getState().syncError : '',
+  });
   void outboxCount().then((syncWaiting) => {
     if (useScheduleStore.getState().syncWaiting !== syncWaiting) useScheduleStore.setState({ syncWaiting });
   });
+}
+
+function asBytes(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (Array.isArray(value) && value.every((item) => typeof item === 'number')) return Uint8Array.from(value);
+  return null;
 }
 
 function serial(task: () => Promise<void>) {

@@ -12,6 +12,8 @@ const MAX_CIPHERTEXT = 350000;
 const MAX_MESSAGES = 5000;
 const PAGE = 200;
 const RATE_LIMIT = 120;
+const NEW_ROOMS_PER_HOUR = 10;
+const HOUR = 60 * 60 * 1000;
 const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
 const allowedOrigins = (process.env.RELAY_CORS_ORIGINS || 'http://localhost:8081,http://localhost:19006')
   .split(',')
@@ -38,6 +40,11 @@ db.exec(`
     created_at INTEGER NOT NULL,
     PRIMARY KEY (room_id, seq)
   );
+  CREATE TABLE IF NOT EXISTS room_creates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 const buckets = new Map();
@@ -55,15 +62,30 @@ function tokensMatch(stored, given) {
   return crypto.timingSafeEqual(left, right);
 }
 
-function authorize(roomId, token) {
-  if (!/^[A-Za-z0-9-]{8,80}$/.test(roomId || '')) return false;
-  if (typeof token !== 'string' || token.length < 16 || token.length > 128) return false;
+function authorize(roomId, token, ip) {
+  if (!/^[A-Za-z0-9-]{8,80}$/.test(roomId || '')) return 'bad';
+  if (typeof token !== 'string' || token.length < 16 || token.length > 128) return 'bad';
   const existing = db.prepare('SELECT token FROM rooms WHERE id = ?').get(roomId);
   if (!existing) {
+    if (tooManyRooms(ip || 'unknown')) return 'limited';
     db.prepare('INSERT INTO rooms (id, token, created_at, next_seq) VALUES (?, ?, ?, 0)').run(roomId, token, Date.now());
-    return true;
+    return 'ok';
   }
-  return tokensMatch(existing.token, token);
+  return tokensMatch(existing.token, token) ? 'ok' : 'bad';
+}
+
+function tooManyRooms(ip) {
+  const since = Date.now() - HOUR;
+  db.prepare('DELETE FROM room_creates WHERE created_at < ?').run(since);
+  const row = db.prepare('SELECT COUNT(*) AS n FROM room_creates WHERE ip = ? AND created_at >= ?').get(ip, since);
+  if (row.n >= NEW_ROOMS_PER_HOUR) return true;
+  db.prepare('INSERT INTO room_creates (ip, created_at) VALUES (?, ?)').run(ip, Date.now());
+  return false;
+}
+
+function clientIp(req) {
+  const address = req.socket?.remoteAddress || req.ip || 'unknown';
+  return String(address).slice(0, 80);
 }
 
 function limited(roomId) {
@@ -124,7 +146,12 @@ app.get('/health', (_req, res) => {
 app.post('/rooms/:roomId/messages', (req, res) => {
   const roomId = req.params.roomId;
   const token = bearer(req.headers.authorization);
-  if (!authorize(roomId, token)) {
+  const access = authorize(roomId, token, clientIp(req));
+  if (access === 'limited') {
+    res.status(429).json({ error: 'limited' });
+    return;
+  }
+  if (access !== 'ok') {
     res.status(401).json({ error: 'unauthorized' });
     return;
   }
@@ -132,7 +159,7 @@ app.post('/rooms/:roomId/messages', (req, res) => {
     res.status(429).json({ error: 'limited' });
     return;
   }
-  const { ciphertext, iv, tag } = req.body || {};
+  const { ciphertext, iv, tag, snapshotSeq } = req.body || {};
   if (typeof ciphertext !== 'string' || typeof iv !== 'string' || typeof tag !== 'string') {
     res.status(400).json({ error: 'bad message' });
     return;
@@ -146,6 +173,10 @@ app.post('/rooms/:roomId/messages', (req, res) => {
   db.prepare(
     'INSERT INTO messages (room_id, seq, ciphertext, iv, tag, created_at) VALUES (?, ?, ?, ?, ?, ?)',
   ).run(roomId, seq, ciphertext, iv, tag, createdAt);
+  if (Number.isInteger(snapshotSeq) && snapshotSeq >= 0) {
+    const covered = Math.min(snapshotSeq, seq - 1);
+    db.prepare('DELETE FROM messages WHERE room_id = ? AND seq <= ?').run(roomId, covered);
+  }
   io.to(roomId).emit('relay-message', { seq, ciphertext, iv, tag });
   res.json({ seq });
 });
@@ -153,7 +184,12 @@ app.post('/rooms/:roomId/messages', (req, res) => {
 app.get('/rooms/:roomId/messages', (req, res) => {
   const roomId = req.params.roomId;
   const token = bearer(req.headers.authorization);
-  if (!authorize(roomId, token)) {
+  const access = authorize(roomId, token, clientIp(req));
+  if (access === 'limited') {
+    res.status(429).json({ error: 'limited' });
+    return;
+  }
+  if (access !== 'ok') {
     res.status(401).json({ error: 'unauthorized' });
     return;
   }
@@ -183,7 +219,12 @@ const io = new Server(server, {
 
 io.use((socket, next) => {
   const { roomId, token } = socket.handshake.auth || {};
-  if (!authorize(roomId, token)) {
+  const access = authorize(roomId, token, socket.handshake.address || 'unknown');
+  if (access === 'limited') {
+    next(new Error('limited'));
+    return;
+  }
+  if (access !== 'ok') {
     next(new Error('unauthorized'));
     return;
   }

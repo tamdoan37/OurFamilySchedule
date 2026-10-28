@@ -2,6 +2,9 @@
   "name": "our-family-schedule-relay",
   "version": "1.0.0",
   "main": "server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "start": "node server.js"
   },

@@ -36,6 +36,8 @@ npm install
 npm start
 ```
 
+Production must use https://. A local http:// relay is only for a private test.
+
 ## Demo Flow
 1. Open the app → tap **Load Demo Events**.
 2. Tap **View Timeline** to see caregiver lanes and an unassigned event.

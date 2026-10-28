@@ -1,3 +1,4 @@
+import '../src/utils/installCrypto';
 import { useEffect } from 'react';
 import { View, Text, StyleSheet, Button } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
