@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { View, Text, StyleSheet, Button } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { useScheduleStore } from '../src/store/scheduleStore';
 
@@ -24,12 +25,13 @@ export default function RootLayout() {
   }, [ready, caregivers, deviceCaregiverId, pathname, router]);
 
   return (
-    <View style={styles.root}>
+    <GestureHandlerRootView style={styles.root}>
       <Stack>
         <Stack.Screen name="index" options={{ title: 'OurFamilySchedule' }} />
         <Stack.Screen name="setup" options={{ title: 'Family setup' }} />
         <Stack.Screen name="capture" options={{ title: 'Scan Schedule' }} />
         <Stack.Screen name="timeline" options={{ title: 'Timeline' }} />
+        <Stack.Screen name="event/[id]" options={{ title: 'Edit event' }} />
       </Stack>
       {!ready && (
         <View style={styles.loading}>
@@ -37,7 +39,7 @@ export default function RootLayout() {
           {!!loadError && <Button title="Try again" onPress={() => void retryHydrate()} />}
         </View>
       )}
-    </View>
+    </GestureHandlerRootView>
   );
 }
 

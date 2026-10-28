@@ -1,30 +1,16 @@
 import { useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  Image,
-  StyleSheet,
-  Button,
-  Alert,
-  ScrollView,
-  Pressable,
-  Switch,
-  Platform,
-} from 'react-native';
+import { View, Text, Image, StyleSheet, Button, Alert, ScrollView, Pressable, Switch, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as ExpoCalendar from 'expo-calendar';
 import * as Crypto from 'expo-crypto';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { useScheduleStore, toOffsetISO } from '../store/scheduleStore';
 import { parseScheduleFromPhoto } from '../parser/parseSchedule';
 import { draftProblems, findDuplicateId } from '../parser/reviewDrafts';
 import { DraftEvent } from '../types';
-
-const ICONS = ['⚽', '🎹', '🩺', '🏫', '⭐'];
+import { ChoiceRow, EventDraftFields, EventFields, IconField } from '../components/EventFields';
 
 type ReviewRow = {
   key: string;
@@ -44,8 +30,6 @@ type ReviewRow = {
   action: 'save' | 'skip' | 'update';
 };
 
-type PickerTarget = { key: string; mode: 'date' | 'start' | 'end' } | null;
-
 export default function CaptureScreen() {
   const cameraRef = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
@@ -53,15 +37,14 @@ export default function CaptureScreen() {
   const events = useScheduleStore((state) => state.events);
   const caregivers = useScheduleStore((state) => state.caregivers);
   const children = useScheduleStore((state) => state.children);
-  const deviceCaregiverId = useScheduleStore((state) => state.deviceCaregiverId);
   const addEvent = useScheduleStore((state) => state.addEvent);
-  const updateEventField = useScheduleStore((state) => state.updateEventField);
+  const updateEventFields = useScheduleStore((state) => state.updateEventFields);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [rows, setRows] = useState<ReviewRow[]>([]);
   const [allChildIds, setAllChildIds] = useState<string[]>([]);
   const [allCaregiverId, setAllCaregiverId] = useState('');
   const [allIcon, setAllIcon] = useState('');
-  const [picker, setPicker] = useState<PickerTarget>(null);
+  const [allTouched, setAllTouched] = useState({ children: false, caregiver: false, icon: false });
   const [showErrors, setShowErrors] = useState(false);
   const [addToPhone, setAddToPhone] = useState(false);
   const [writableCalendars, setWritableCalendars] = useState<ExpoCalendar.Calendar[]>([]);
@@ -70,13 +53,13 @@ export default function CaptureScreen() {
 
   async function openPhoto(uri: string) {
     const drafts = await parseScheduleFromPhoto(uri);
-    const caregiverId = caregivers.some((person) => person.id === deviceCaregiverId) ? deviceCaregiverId : '';
     setAllChildIds([]);
-    setAllCaregiverId(caregiverId);
+    setAllCaregiverId('');
     setAllIcon('');
+    setAllTouched({ children: false, caregiver: false, icon: false });
     setShowErrors(false);
     setPhotoUri(uri);
-    setRows(drafts.map((draft) => toReviewRow(draft, events, { childIds: [], caregiverId, icon: '' })));
+    setRows(drafts.map((draft) => toReviewRow(draft, events, { childIds: [], caregiverId: '', icon: '' })));
   }
 
   async function takePhoto() {
@@ -111,17 +94,29 @@ export default function CaptureScreen() {
     }));
   }
 
+  function changeFields(row: ReviewRow, next: EventDraftFields) {
+    const patch: Partial<ReviewRow> = { ...next };
+    if (next.childIds.join('|') !== row.childIds.join('|')) patch.customChildren = true;
+    if (next.caregiverId !== row.caregiverId) patch.customCaregiver = true;
+    if (next.icon !== row.icon) patch.customIcon = true;
+    const recheck = next.title !== row.title || next.start.getTime() !== row.start.getTime();
+    updateRow(row.key, patch, recheck);
+  }
+
   function applyChildren(next: string[]) {
+    setAllTouched((current) => ({ ...current, children: true }));
     setAllChildIds(next);
     setRows((current) => current.map((row) => (row.customChildren ? row : { ...row, childIds: next })));
   }
 
   function applyCaregiver(next: string) {
+    setAllTouched((current) => ({ ...current, caregiver: true }));
     setAllCaregiverId(next);
     setRows((current) => current.map((row) => (row.customCaregiver ? row : { ...row, caregiverId: next })));
   }
 
   function applyIcon(next: string) {
+    setAllTouched((current) => ({ ...current, icon: true }));
     setAllIcon(next);
     setRows((current) => current.map((row) => (row.customIcon ? row : { ...row, icon: next })));
   }
@@ -222,15 +217,28 @@ export default function CaptureScreen() {
           calendarEventId,
         };
         if (row.action === 'update' && row.duplicateId) {
-          updateEventField(row.duplicateId, 'title', fields.title);
-          updateEventField(row.duplicateId, 'startTime', fields.startTime);
-          updateEventField(row.duplicateId, 'endTime', fields.endTime);
-          updateEventField(row.duplicateId, 'location', fields.location);
-          updateEventField(row.duplicateId, 'childIds', fields.childIds);
-          updateEventField(row.duplicateId, 'caregiverId', fields.caregiverId);
-          updateEventField(row.duplicateId, 'icon', fields.icon);
-          updateEventField(row.duplicateId, 'scanId', fields.scanId);
-          if (calendarEventId) updateEventField(row.duplicateId, 'calendarEventId', calendarEventId);
+          const patch: {
+            title: string;
+            startTime: string;
+            endTime: string;
+            location: string;
+            scanId: string;
+            childIds?: string[];
+            caregiverId?: string;
+            icon?: string;
+            calendarEventId?: string;
+          } = {
+            title: row.title.trim(),
+            startTime: toOffsetISO(row.start),
+            endTime: toOffsetISO(row.end),
+            location: row.location.trim(),
+            scanId,
+          };
+          if (row.customChildren || allTouched.children) patch.childIds = row.childIds;
+          if (row.customCaregiver || allTouched.caregiver) patch.caregiverId = row.caregiverId;
+          if (row.customIcon || allTouched.icon) patch.icon = row.icon.trim();
+          if (calendarEventId) patch.calendarEventId = calendarEventId;
+          updateEventFields(row.duplicateId, patch);
         } else {
           addEvent(fields);
         }
@@ -311,60 +319,21 @@ export default function CaptureScreen() {
             <View style={[styles.draft, row.confidence < 0.7 && styles.check, showRowErrors && styles.draftBad]}>
               <Text style={styles.rowLabel}>Row {index + 1}</Text>
               {row.confidence < 0.7 && <Text style={styles.checkText}>check this</Text>}
-              <TextInput
-                value={row.title}
-                onChangeText={(title) => updateRow(row.key, { title }, true)}
-                placeholder="Title"
-                style={styles.input}
-              />
-              <DateField
-                label="Date"
-                value={row.start}
-                mode="date"
-                open={picker?.key === row.key && picker.mode === 'date'}
-                onOpen={() => setPicker({ key: row.key, mode: 'date' })}
-                onClose={() => setPicker(null)}
-                onChange={(picked) => updateRow(row.key, { start: applyDate(row.start, picked), end: applyDate(row.end, picked) }, true)}
-              />
-              <DateField
-                label="Start"
-                value={row.start}
-                mode="time"
-                open={picker?.key === row.key && picker.mode === 'start'}
-                onOpen={() => setPicker({ key: row.key, mode: 'start' })}
-                onClose={() => setPicker(null)}
-                onChange={(picked) => updateRow(row.key, { start: applyTime(row.start, picked) }, true)}
-              />
-              <DateField
-                label="End"
-                value={row.end}
-                mode="time"
-                open={picker?.key === row.key && picker.mode === 'end'}
-                onOpen={() => setPicker({ key: row.key, mode: 'end' })}
-                onClose={() => setPicker(null)}
-                onChange={(picked) => updateRow(row.key, { end: applyTime(row.end, picked) })}
-              />
-              <TextInput
-                value={row.location}
-                onChangeText={(location) => updateRow(row.key, { location })}
-                placeholder="Location"
-                style={styles.input}
+              <EventFields
+                value={{
+                  title: row.title,
+                  start: row.start,
+                  end: row.end,
+                  location: row.location,
+                  childIds: row.childIds,
+                  caregiverId: row.caregiverId,
+                  icon: row.icon,
+                }}
+                caregivers={caregivers}
+                children={children}
+                onChange={(next) => changeFields(row, next)}
               />
               {!!row.rawText && <Text style={styles.raw}>{row.rawText}</Text>}
-              <Text style={styles.label}>Children</Text>
-              <ChoiceRow
-                options={children.map((child) => ({ id: child.id, label: child.name, color: child.color }))}
-                selected={row.childIds}
-                onToggle={(id) => updateRow(row.key, { childIds: toggleId(row.childIds, id), customChildren: true })}
-              />
-              <Text style={styles.label}>Caregiver on duty</Text>
-              <ChoiceRow
-                options={[{ id: '', label: 'Unassigned', color: '#666' }, ...caregivers.map((person) => ({ id: person.id, label: person.name, color: person.color }))]}
-                selected={[row.caregiverId]}
-                onToggle={(id) => updateRow(row.key, { caregiverId: id, customCaregiver: true })}
-              />
-              <Text style={styles.label}>Icon</Text>
-              <IconField value={row.icon} onChange={(icon) => updateRow(row.key, { icon, customIcon: true })} />
               {row.duplicateId ? (
                 <View>
                   <Text style={styles.already}>Already in your schedule</Text>
@@ -441,102 +410,6 @@ function toggleId(ids: string[], id: string): string[] {
   return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
 }
 
-function applyDate(current: Date, picked: Date): Date {
-  const next = new Date(Number.isNaN(current.getTime()) ? picked : current);
-  next.setFullYear(picked.getFullYear(), picked.getMonth(), picked.getDate());
-  return next;
-}
-
-function applyTime(current: Date, picked: Date): Date {
-  const next = new Date(Number.isNaN(current.getTime()) ? picked : current);
-  next.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
-  return next;
-}
-
-function ChoiceRow({
-  options,
-  selected,
-  onToggle,
-}: {
-  options: { id: string; label: string; color: string }[];
-  selected: string[];
-  onToggle: (id: string) => void;
-}) {
-  if (options.length === 0) return <Text style={styles.note}>None yet. Add them from Family.</Text>;
-  return (
-    <View style={styles.choiceLine}>
-      {options.map((option) => {
-        const on = selected.includes(option.id);
-        return (
-          <Pressable key={option.id || 'none'} onPress={() => onToggle(option.id)} style={[styles.chip, on && styles.chipOn]}>
-            <Text style={{ color: option.color, fontWeight: '600' }}>{option.label}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-function IconField({ value, onChange }: { value: string; onChange: (icon: string) => void }) {
-  return (
-    <View>
-      <View style={styles.choiceLine}>
-        {ICONS.map((icon) => (
-          <Pressable key={icon} onPress={() => onChange(icon)} style={[styles.chip, value === icon && styles.chipOn]}>
-            <Text>{icon}</Text>
-          </Pressable>
-        ))}
-      </View>
-      <TextInput value={value} onChangeText={onChange} placeholder="Icon" style={styles.input} />
-    </View>
-  );
-}
-
-function DateField({
-  label,
-  value,
-  mode,
-  open,
-  onOpen,
-  onClose,
-  onChange,
-}: {
-  label: string;
-  value: Date;
-  mode: 'date' | 'time';
-  open: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-  onChange: (picked: Date) => void;
-}) {
-  const invalid = Number.isNaN(value.getTime());
-  const shown = invalid ? new Date() : value;
-  const text = invalid
-    ? 'Not a date'
-    : mode === 'date'
-      ? shown.toLocaleDateString()
-      : shown.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  return (
-    <View>
-      <Text style={styles.label}>{label}</Text>
-      <Pressable onPress={onOpen} style={styles.pickerButton}>
-        <Text>{text}</Text>
-      </Pressable>
-      {open && (
-        <DateTimePicker
-          value={shown}
-          mode={mode}
-          onChange={(event, picked) => {
-            if (Platform.OS === 'android') onClose();
-            if (event.type === 'dismissed' || !picked) return;
-            onChange(picked);
-          }}
-        />
-      )}
-      {open && Platform.OS === 'ios' && <Button title="Done" onPress={onClose} />}
-    </View>
-  );
-}
 
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, padding: 24 },

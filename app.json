@@ -40,6 +40,13 @@
       "expo-asset",
       "expo-system-ui",
       "expo-sqlite",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Save parsed events to your calendar",
+          "remindersPermission": false
+        }
+      ],
       "@react-native-community/datetimepicker",
       [
         "expo-image-picker",

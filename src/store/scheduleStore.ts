@@ -21,6 +21,7 @@ interface ScheduleState {
   setDeviceCaregiver: (caregiverId: string) => Promise<void>;
   addEvent: (input: NewEvent) => string;
   updateEventField: (id: string, field: EventField, value: string | boolean | string[]) => void;
+  updateEventFields: (id: string, patch: EventPatch) => void;
   claimEvent: (id: string) => void;
   unclaimEvent: (id: string) => void;
   deleteEvent: (id: string) => void;
@@ -40,6 +41,21 @@ type NewEvent = {
   scanId?: string;
   calendarEventId?: string;
 };
+
+type EventPatch = Partial<{
+  title: string;
+  startTime: string;
+  endTime: string;
+  location: string;
+  childIds: string[];
+  caregiverId: string;
+  backupCaregiverId: string;
+  notes: string;
+  icon: string;
+  scanId: string;
+  calendarEventId: string;
+  deleted: boolean;
+}>;
 
 const ydoc = new Y.Doc();
 const SAVE_DELAY_MS = 500;
@@ -320,14 +336,23 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
     set({ demoEventIds: get().demoEventIds.filter((demoId) => demoId !== id) });
     return id;
   },
-  updateEventField: (id, field, value) => {
+  updateEventFields: (id, patch) => {
     const map = eventsMap().get(id) as Y.Map<unknown> | undefined;
     if (!map) return;
+    const fields = (Object.keys(patch) as (keyof EventPatch)[]).filter((field) => patch[field] !== undefined);
+    if (fields.length === 0) return;
     ydoc.transact(() => {
-      if (field === 'childIds' && Array.isArray(value)) writeChildIds(map, value);
-      else map.set(field, value);
+      for (const field of fields) {
+        const value = patch[field];
+        if (value === undefined) continue;
+        if (field === 'childIds' && Array.isArray(value)) writeChildIds(map, value);
+        else map.set(field, value);
+      }
       stamp(map);
     });
+  },
+  updateEventField: (id, field, value) => {
+    get().updateEventFields(id, { [field]: value } as EventPatch);
   },
   claimEvent: (id) => {
     const caregiverId = get().deviceCaregiverId;
