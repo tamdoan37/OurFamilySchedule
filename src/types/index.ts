@@ -1,17 +1,31 @@
 export interface AppEvent {
   id: string;
   title: string;
-  startTime: string; // ISO
+  startTime: string;
   endTime: string;
-  location?: string;
-  assignedCaregiverId: string | null;
-  notes?: string;
+  location: string;
+  childIds: string[];
+  caregiverId: string;
+  backupCaregiverId: string;
+  notes: string;
+  icon: string;
+  scanId: string;
+  calendarEventId: string;
+  deleted: boolean;
+  lastEditedBy: string;
+  lastEditedAt: string;
 }
 
 export interface Caregiver {
   id: string;
   name: string;
-  colorCode: string;
+  color: string;
+}
+
+export interface Child {
+  id: string;
+  name: string;
+  color: string;
 }
 
 export interface DraftEvent {
@@ -29,3 +43,17 @@ export interface EncryptedPayload {
   iv: string;
   tag: string;
 }
+
+export type EventField =
+  | 'title'
+  | 'startTime'
+  | 'endTime'
+  | 'location'
+  | 'childIds'
+  | 'caregiverId'
+  | 'backupCaregiverId'
+  | 'notes'
+  | 'icon'
+  | 'scanId'
+  | 'calendarEventId'
+  | 'deleted';

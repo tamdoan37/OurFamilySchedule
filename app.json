@@ -43,7 +43,8 @@
           "cameraPermissionText": "Allow camera to scan schedules"
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "expo-system-ui"
     ],
     "experiments": {
       "typedRoutes": true
