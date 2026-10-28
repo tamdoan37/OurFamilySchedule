@@ -44,7 +44,8 @@
         }
       ],
       "expo-asset",
-      "expo-system-ui"
+      "expo-system-ui",
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true

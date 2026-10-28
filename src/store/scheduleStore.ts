@@ -1,11 +1,13 @@
 import { create } from 'zustand';
+import { AppState } from 'react-native';
 import * as Y from 'yjs';
 import * as Crypto from 'expo-crypto';
-import * as FileSystem from 'expo-file-system';
+import * as SQLite from 'expo-sqlite';
 import { AppEvent, Caregiver, Child, EventField } from '../types';
 
 interface ScheduleState {
   ready: boolean;
+  loadError: string;
   events: AppEvent[];
   caregivers: Caregiver[];
   children: Child[];
@@ -39,7 +41,108 @@ type NewEvent = {
 };
 
 const ydoc = new Y.Doc();
-const OWNER_FILE = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}device-owner.json` : null;
+const SAVE_DELAY_MS = 500;
+
+let persistenceEnabled = false;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let hydratePromise: Promise<void> | null = null;
+let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+let database: SQLite.SQLiteDatabase | null = null;
+
+function getDatabase() {
+  if (!databasePromise) {
+    databasePromise = (async () => {
+      const db = await SQLite.openDatabaseAsync('our-family-schedule.db');
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS local_state (
+          id INTEGER PRIMARY KEY NOT NULL,
+          ydoc BLOB NOT NULL,
+          device_caregiver_id TEXT NOT NULL,
+          demo_event_ids TEXT NOT NULL
+        );
+      `);
+      database = db;
+      return db;
+    })();
+  }
+  return databasePromise;
+}
+
+function asUpdate(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (Array.isArray(value) && value.every((item) => typeof item === 'number')) return Uint8Array.from(value);
+  return null;
+}
+
+function parseIdList(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) return parsed;
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+function persistNow() {
+  if (!persistenceEnabled || !database) return;
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  const update = Y.encodeStateAsUpdate(ydoc);
+  const { deviceCaregiverId, demoEventIds } = useScheduleStore.getState();
+  database.runSync(
+    `INSERT OR REPLACE INTO local_state (id, ydoc, device_caregiver_id, demo_event_ids)
+     VALUES (1, ?, ?, ?)`,
+    update,
+    deviceCaregiverId,
+    JSON.stringify(demoEventIds),
+  );
+}
+
+function schedulePersist() {
+  if (!persistenceEnabled || !database) return;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    persistNow();
+  }, SAVE_DELAY_MS);
+}
+
+async function loadPersistedState() {
+  try {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<{
+      ydoc: unknown;
+      device_caregiver_id: string;
+      demo_event_ids: string;
+    }>('SELECT ydoc, device_caregiver_id, demo_event_ids FROM local_state WHERE id = 1');
+    if (row) {
+      const update = asUpdate(row.ydoc);
+      if (!update) throw new Error('Saved calendar could not be read');
+      if (update.byteLength > 0) Y.applyUpdate(ydoc, update);
+    }
+    persistenceEnabled = true;
+    useScheduleStore.setState({
+      ready: true,
+      loadError: '',
+      deviceCaregiverId: row?.device_caregiver_id ?? '',
+      demoEventIds: parseIdList(row?.demo_event_ids),
+      events: readEvents(),
+      caregivers: readCaregivers(),
+      children: readChildren(),
+    });
+  } catch {
+    persistenceEnabled = false;
+    useScheduleStore.setState({
+      ready: false,
+      loadError: "Couldn't open the saved calendar.",
+    });
+  }
+}
 
 function eventsMap() {
   return ydoc.getMap('events');
@@ -144,38 +247,21 @@ function writeEvent(input: NewEvent & { id: string }) {
 
 ydoc.on('update', () => {
   publish();
+  schedulePersist();
 });
 
 export const useScheduleStore = create<ScheduleState>((set, get) => ({
   ready: false,
+  loadError: '',
   events: [],
   caregivers: [],
   children: [],
   deviceCaregiverId: '',
   demoEventIds: [],
   ydoc,
-  hydrate: async () => {
-    if (get().ready) return;
-    let deviceCaregiverId = '';
-    if (OWNER_FILE) {
-      const info = await FileSystem.getInfoAsync(OWNER_FILE);
-      if (info.exists) {
-        try {
-          const raw = await FileSystem.readAsStringAsync(OWNER_FILE);
-          const parsed = JSON.parse(raw) as { deviceCaregiverId?: string };
-          if (typeof parsed.deviceCaregiverId === 'string') deviceCaregiverId = parsed.deviceCaregiverId;
-        } catch {
-          deviceCaregiverId = '';
-        }
-      }
-    }
-    set({
-      ready: true,
-      deviceCaregiverId,
-      events: readEvents(),
-      caregivers: readCaregivers(),
-      children: readChildren(),
-    });
+  hydrate: () => {
+    if (!hydratePromise) hydratePromise = loadPersistedState();
+    return hydratePromise;
   },
   addCaregiver: (name, color) => {
     const id = Crypto.randomUUID();
@@ -198,10 +284,8 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
     return id;
   },
   setDeviceCaregiver: async (caregiverId) => {
-    if (OWNER_FILE) {
-      await FileSystem.writeAsStringAsync(OWNER_FILE, JSON.stringify({ deviceCaregiverId: caregiverId }));
-    }
     set({ deviceCaregiverId: caregiverId });
+    persistNow();
   },
   addEvent: (input) => {
     const id = Crypto.randomUUID();
@@ -270,3 +354,9 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
     set({ demoEventIds: [...get().demoEventIds, ...demoEventIds] });
   },
 }));
+
+AppState.addEventListener('change', (next) => {
+  if (next === 'background' || next === 'inactive') persistNow();
+});
+
+void useScheduleStore.getState().hydrate();
