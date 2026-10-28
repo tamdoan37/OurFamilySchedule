@@ -7,6 +7,7 @@ export default function TimelineScreen() {
   const caregivers = useScheduleStore((state) => state.caregivers);
   const children = useScheduleStore((state) => state.children);
   const demoEventIds = useScheduleStore((state) => state.demoEventIds);
+  const deviceCaregiverId = useScheduleStore((state) => state.deviceCaregiverId);
   const claimEvent = useScheduleStore((state) => state.claimEvent);
   const unclaimEvent = useScheduleStore((state) => state.unclaimEvent);
   const showingDemo = events.some((event) => demoEventIds.includes(event.id));
@@ -21,6 +22,7 @@ export default function TimelineScreen() {
         const backup = caregivers.find((person) => person.id === event.backupCaregiverId);
         const names = children.filter((child) => event.childIds.includes(child.id)).map((child) => child.name);
         const isUnassigned = !event.caregiverId;
+        const isMine = !!event.caregiverId && event.caregiverId === deviceCaregiverId;
         return (
           <View
             key={event.id}
@@ -38,11 +40,8 @@ export default function TimelineScreen() {
             {isUnassigned && <Text style={styles.claim}>Unassigned</Text>}
             {caregiver && <Text style={{ color: caregiver.color }}>{caregiver.name}</Text>}
             {backup && <Text>Backup: {backup.name}</Text>}
-            {isUnassigned ? (
-              <Button title="Claim" onPress={() => claimEvent(event.id)} />
-            ) : (
-              <Button title="Unclaim" onPress={() => unclaimEvent(event.id)} />
-            )}
+            {isUnassigned && <Button title="Claim" onPress={() => claimEvent(event.id)} />}
+            {isMine && <Button title="Unclaim" onPress={() => unclaimEvent(event.id)} />}
           </View>
         );
       })}

@@ -15,6 +15,7 @@ interface ScheduleState {
   demoEventIds: string[];
   ydoc: Y.Doc;
   hydrate: () => Promise<void>;
+  retryHydrate: () => Promise<void>;
   addCaregiver: (name: string, color: string) => string;
   addChild: (name: string, color: string) => string;
   setDeviceCaregiver: (caregiverId: string) => Promise<void>;
@@ -48,6 +49,7 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let hydratePromise: Promise<void> | null = null;
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let database: SQLite.SQLiteDatabase | null = null;
+let loadGeneration = 0;
 
 function getDatabase() {
   if (!databasePromise) {
@@ -61,7 +63,6 @@ function getDatabase() {
           demo_event_ids TEXT NOT NULL
         );
       `);
-      database = db;
       return db;
     })();
   }
@@ -113,18 +114,23 @@ function schedulePersist() {
 }
 
 async function loadPersistedState() {
+  const generation = ++loadGeneration;
   try {
     const db = await getDatabase();
+    if (generation !== loadGeneration) return;
+    database = db;
     const row = await db.getFirstAsync<{
       ydoc: unknown;
       device_caregiver_id: string;
       demo_event_ids: string;
     }>('SELECT ydoc, device_caregiver_id, demo_event_ids FROM local_state WHERE id = 1');
+    if (generation !== loadGeneration) return;
     if (row) {
       const update = asUpdate(row.ydoc);
       if (!update) throw new Error('Saved calendar could not be read');
       if (update.byteLength > 0) Y.applyUpdate(ydoc, update);
     }
+    if (generation !== loadGeneration) return;
     persistenceEnabled = true;
     useScheduleStore.setState({
       ready: true,
@@ -135,8 +141,13 @@ async function loadPersistedState() {
       caregivers: readCaregivers(),
       children: readChildren(),
     });
-  } catch {
+  } catch (error) {
+    if (generation !== loadGeneration) return;
+    console.error(error);
     persistenceEnabled = false;
+    databasePromise = null;
+    database = null;
+    hydratePromise = null;
     useScheduleStore.setState({
       ready: false,
       loadError: "Couldn't open the saved calendar.",
@@ -184,14 +195,13 @@ function readEvents(): AppEvent[] {
   eventsMap().forEach((value, id) => {
     const map = value as Y.Map<unknown>;
     if (map.get('deleted') === true) return;
-    const children = map.get('children');
     rows.push({
       id,
       title: String(map.get('title') ?? ''),
       startTime: String(map.get('startTime') ?? ''),
       endTime: String(map.get('endTime') ?? ''),
       location: String(map.get('location') ?? ''),
-      childIds: children instanceof Y.Array ? (children.toArray() as string[]) : [],
+      childIds: readChildIds(map),
       caregiverId: String(map.get('caregiverId') ?? ''),
       backupCaregiverId: String(map.get('backupCaregiverId') ?? ''),
       notes: String(map.get('notes') ?? ''),
@@ -219,12 +229,18 @@ function stamp(map: Y.Map<unknown>) {
   map.set('lastEditedAt', toOffsetISO(new Date()));
 }
 
-function writeChildren(map: Y.Map<unknown>, ids: string[]) {
-  const existing = map.get('children');
-  const list = existing instanceof Y.Array ? (existing as Y.Array<string>) : new Y.Array<string>();
-  if (!(existing instanceof Y.Array)) map.set('children', list);
-  if (list.length > 0) list.delete(0, list.length);
-  if (ids.length > 0) list.push(ids);
+function writeChildIds(map: Y.Map<unknown>, ids: string[]) {
+  map.set('childIds', ids.filter((id) => typeof id === 'string'));
+}
+
+function readChildIds(map: Y.Map<unknown>): string[] {
+  const plain = map.get('childIds');
+  if (Array.isArray(plain)) return plain.filter((id): id is string => typeof id === 'string');
+  const legacy = map.get('children');
+  if (legacy instanceof Y.Array) {
+    return (legacy.toArray() as unknown[]).filter((id): id is string => typeof id === 'string');
+  }
+  return [];
 }
 
 function writeEvent(input: NewEvent & { id: string }) {
@@ -240,7 +256,7 @@ function writeEvent(input: NewEvent & { id: string }) {
   map.set('scanId', input.scanId ?? '');
   map.set('calendarEventId', input.calendarEventId ?? '');
   map.set('deleted', false);
-  writeChildren(map, input.childIds ?? []);
+  writeChildIds(map, input.childIds ?? []);
   stamp(map);
   eventsMap().set(input.id, map);
 }
@@ -262,6 +278,15 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   hydrate: () => {
     if (!hydratePromise) hydratePromise = loadPersistedState();
     return hydratePromise;
+  },
+  retryHydrate: () => {
+    loadGeneration += 1;
+    hydratePromise = null;
+    databasePromise = null;
+    database = null;
+    persistenceEnabled = false;
+    set({ ready: false, loadError: '' });
+    return get().hydrate();
   },
   addCaregiver: (name, color) => {
     const id = Crypto.randomUUID();
@@ -299,7 +324,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
     const map = eventsMap().get(id) as Y.Map<unknown> | undefined;
     if (!map) return;
     ydoc.transact(() => {
-      if (field === 'childIds' && Array.isArray(value)) writeChildren(map, value);
+      if (field === 'childIds' && Array.isArray(value)) writeChildIds(map, value);
       else map.set(field, value);
       stamp(map);
     });

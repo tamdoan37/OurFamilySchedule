@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { useEffect } from 'react';
+import { View, Text, StyleSheet, Button } from 'react-native';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { useScheduleStore } from '../src/store/scheduleStore';
 
 export default function RootLayout() {
   const hydrate = useScheduleStore((state) => state.hydrate);
+  const retryHydrate = useScheduleStore((state) => state.retryHydrate);
   const ready = useScheduleStore((state) => state.ready);
   const loadError = useScheduleStore((state) => state.loadError);
   const caregivers = useScheduleStore((state) => state.caregivers);
@@ -16,30 +17,41 @@ export default function RootLayout() {
     void hydrate();
   }, [hydrate]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!ready || pathname === '/setup') return;
-    if (caregivers.length === 0 || !deviceCaregiverId) router.replace('/setup');
-  }, [ready, caregivers.length, deviceCaregiverId, pathname, router]);
-
-  if (!ready) {
-    return (
-      <View style={styles.loading}>
-        <Text style={styles.loadingText}>{loadError || 'Loading…'}</Text>
-      </View>
-    );
-  }
+    const ownerKnown = caregivers.some((person) => person.id === deviceCaregiverId);
+    if (caregivers.length === 0 || !ownerKnown) router.replace('/setup');
+  }, [ready, caregivers, deviceCaregiverId, pathname, router]);
 
   return (
-    <Stack>
-      <Stack.Screen name="index" options={{ title: 'OurFamilySchedule' }} />
-      <Stack.Screen name="setup" options={{ title: 'Family setup' }} />
-      <Stack.Screen name="capture" options={{ title: 'Scan Schedule' }} />
-      <Stack.Screen name="timeline" options={{ title: 'Timeline' }} />
-    </Stack>
+    <View style={styles.root}>
+      <Stack>
+        <Stack.Screen name="index" options={{ title: 'OurFamilySchedule' }} />
+        <Stack.Screen name="setup" options={{ title: 'Family setup' }} />
+        <Stack.Screen name="capture" options={{ title: 'Scan Schedule' }} />
+        <Stack.Screen name="timeline" options={{ title: 'Timeline' }} />
+      </Stack>
+      {!ready && (
+        <View style={styles.loading}>
+          <Text style={styles.loadingText}>{loadError || 'Loading…'}</Text>
+          {!!loadError && <Button title="Try again" onPress={() => void retryHydrate()} />}
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  loading: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  root: { flex: 1 },
+  loading: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10,
+    elevation: 10,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    gap: 16,
+  },
   loadingText: { fontSize: 16, color: '#666', textAlign: 'center' },
 });

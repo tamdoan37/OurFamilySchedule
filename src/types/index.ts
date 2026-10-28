@@ -29,12 +29,12 @@ export interface Child {
 }
 
 export interface DraftEvent {
-  id: string;
   title: string;
-  startTime: string;
-  endTime: string;
-  location?: string;
-  confidence?: number;
+  start: string;
+  end: string;
+  location: string;
+  confidence: number;
+  rawText: string;
 }
 
 export interface EncryptedPayload {

@@ -23,6 +23,9 @@ export default function HomeScreen() {
       <Link href="/capture" asChild>
         <Button title="Scan Schedule Flyer" />
       </Link>
+      <Link href="/setup" asChild>
+        <Button title="Family" />
+      </Link>
       <Link href="/timeline" asChild>
         <Button title="View Timeline" />
       </Link>

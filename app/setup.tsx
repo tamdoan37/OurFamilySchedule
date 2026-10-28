@@ -16,12 +16,15 @@ export default function SetupScreen() {
   const addCaregiver = useScheduleStore((state) => state.addCaregiver);
   const addChild = useScheduleStore((state) => state.addChild);
   const setDeviceCaregiver = useScheduleStore((state) => state.setDeviceCaregiver);
+  const deviceCaregiverId = useScheduleStore((state) => state.deviceCaregiverId);
   const router = useRouter();
   const [caregiverName, setCaregiverName] = useState('');
   const [caregiverColor, setCaregiverColor] = useState(COLORS[0].value);
   const [childName, setChildName] = useState('');
   const [childColor, setChildColor] = useState(COLORS[1].value);
-  const [phoneOwner, setPhoneOwner] = useState('');
+  const [phoneOwner, setPhoneOwner] = useState(() =>
+    caregivers.some((person) => person.id === deviceCaregiverId) ? deviceCaregiverId : '',
+  );
 
   async function finish() {
     if (!phoneOwner) return;

@@ -37,15 +37,25 @@
     "plugins": [
       "expo-router",
       "expo-dev-client",
-      [
-        "react-native-vision-camera",
-        {
-          "cameraPermissionText": "Allow camera to scan schedules"
-        }
-      ],
       "expo-asset",
       "expo-system-ui",
-      "expo-sqlite"
+      "expo-sqlite",
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose a schedule screenshot from your photos",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Capture schedule flyers for AI parsing",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
