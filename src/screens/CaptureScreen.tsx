@@ -4,10 +4,8 @@ import { Camera, useCameraDevice, useCameraPermission } from 'react-native-visio
 import * as Calendar from 'expo-calendar';
 import { DraftEvent } from '../types';
 
-// Mock on-device AI parser (replace with native bridge to Foundation Models / Gemini Nano)
-async function parseScheduleFromImage(uri: string): Promise<DraftEvent[]> {
-  // In real impl: pass base64 or file to native module
-  // Prompt: "Extract tabular schedule as JSON array of {title, startTime, endTime, location}"
+// Mock on-device parser until the native model bridge exists.
+async function parseScheduleFromImage(_uri: string): Promise<DraftEvent[]> {
   return [
     {
       id: 'd1',
@@ -45,7 +43,7 @@ export default function CaptureScreen() {
   }
 
   const takePhoto = async () => {
-    // Simplified - real impl uses camera ref
+    // Camera ref capture is not wired yet. This uses sample rows so the review screen can open.
     const mockUri = 'file://mock-schedule.jpg';
     setPhoto(mockUri);
     const parsed = await parseScheduleFromImage(mockUri);
@@ -87,6 +85,7 @@ export default function CaptureScreen() {
         <Image source={{ uri: photo }} style={styles.photo} resizeMode="contain" />
       )}
       <View style={styles.listHalf}>
+        <Text style={styles.demo}>DEMO DATA</Text>
         <Text style={styles.header}>Review Drafts</Text>
         <FlatList
           data={drafts}
@@ -114,6 +113,7 @@ const styles = StyleSheet.create({
   cameraHalf: { flex: 1, backgroundColor: '#000', justifyContent: 'flex-end' },
   photo: { flex: 1 },
   listHalf: { flex: 1, padding: 16 },
+  demo: { fontSize: 12, fontWeight: '700', letterSpacing: 1, color: '#856404', marginBottom: 4 },
   header: { fontSize: 18, fontWeight: 'bold', marginBottom: 8 },
   draft: { padding: 12, borderBottomWidth: 1, borderColor: '#eee' },
   input: { fontSize: 16, borderBottomWidth: 1, marginBottom: 4 },

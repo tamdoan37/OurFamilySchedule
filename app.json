@@ -11,7 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.ourfamilyschedule.app",
@@ -26,7 +28,11 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.ourfamilyschedule.app",
-      "permissions": ["CAMERA", "READ_CALENDAR", "WRITE_CALENDAR"]
+      "permissions": [
+        "CAMERA",
+        "READ_CALENDAR",
+        "WRITE_CALENDAR"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -36,7 +42,8 @@
         {
           "cameraPermissionText": "Allow camera to scan schedules"
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true

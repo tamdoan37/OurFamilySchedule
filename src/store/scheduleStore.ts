@@ -15,6 +15,11 @@ interface ScheduleState {
 const ydoc = new Y.Doc();
 const yEvents = ydoc.getArray<AppEvent>('events');
 
+const demoCaregivers: Caregiver[] = [
+  { id: 'caregiver-alex', name: 'Alex', colorCode: '#FF6B6B' },
+  { id: 'caregiver-jordan', name: 'Jordan', colorCode: '#4ECDC4' },
+];
+
 const demoEvents: AppEvent[] = [
   {
     id: 'demo1',
@@ -22,7 +27,7 @@ const demoEvents: AppEvent[] = [
     startTime: new Date(Date.now() + 86400000).toISOString(),
     endTime: new Date(Date.now() + 86400000 + 5400000).toISOString(),
     location: 'Field 3',
-    assignedCaregiverId: 'mom',
+    assignedCaregiverId: 'caregiver-alex',
   },
   {
     id: 'demo2',
@@ -30,7 +35,7 @@ const demoEvents: AppEvent[] = [
     startTime: new Date(Date.now() + 172800000).toISOString(),
     endTime: new Date(Date.now() + 172800000 + 2700000).toISOString(),
     location: 'Music Studio',
-    assignedCaregiverId: 'dad',
+    assignedCaregiverId: 'caregiver-jordan',
   },
   {
     id: 'demo3',
@@ -42,12 +47,9 @@ const demoEvents: AppEvent[] = [
   },
 ];
 
-export const useScheduleStore = create<ScheduleState>((set, get) => ({
+export const useScheduleStore = create<ScheduleState>((set) => ({
   events: [],
-  caregivers: [
-    { id: 'mom', name: 'Mom', colorCode: '#FF6B6B' },
-    { id: 'dad', name: 'Dad', colorCode: '#4ECDC4' },
-  ],
+  caregivers: [],
   ydoc,
   setEvents: (events) => set({ events }),
   addEvent: (event) => {
@@ -66,11 +68,11 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   loadDemoData: () => {
     yEvents.delete(0, yEvents.length);
     yEvents.push(demoEvents);
-    set({ events: yEvents.toArray() });
+    set({ events: yEvents.toArray(), caregivers: demoCaregivers });
   },
 }));
 
-// Persist stub - wire to MMKV/SQLite in full impl
+// Persist stub - wire to MMKV/SQLite in a later step
 ydoc.on('update', () => {
-  // save to expo-sqlite or mmkv
+  // save on device
 });

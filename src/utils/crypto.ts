@@ -1,7 +1,9 @@
 // Phase 3: Encryption utilities (react-native-quick-crypto)
 // AES-256-GCM for payloads, X25519 for key exchange
 
-import { randomBytes, createCipheriv, createDecipheriv } from 'react-native-quick-crypto';
+import QuickCrypto from 'react-native-quick-crypto';
+
+const { randomBytes, createCipheriv, createDecipheriv } = QuickCrypto;
 
 export function generateKeyPair() {
   // Stub - real X25519 via quick-crypto or noble

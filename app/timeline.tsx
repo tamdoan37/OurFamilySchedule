@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
-import { useScheduleStore } from '../store/scheduleStore';
+import { useScheduleStore } from '../src/store/scheduleStore';
 
 export default function TimelineScreen() {
   const { events, caregivers } = useScheduleStore();
