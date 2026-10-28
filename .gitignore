@@ -36,3 +36,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# relay storage
+/relay/data/

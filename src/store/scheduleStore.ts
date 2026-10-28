@@ -4,6 +4,7 @@ import * as Y from 'yjs';
 import * as Crypto from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
 import { AppEvent, Caregiver, Child, EventField } from '../types';
+import { emitLocalClaim, emitLocalUpdate } from '../sync/bridge';
 
 interface ScheduleState {
   ready: boolean;
@@ -13,6 +14,10 @@ interface ScheduleState {
   children: Child[];
   deviceCaregiverId: string;
   demoEventIds: string[];
+  paired: boolean;
+  syncStatus: 'synced' | 'syncing' | 'offline';
+  syncWaiting: number;
+  unsyncedClaimIds: string[];
   ydoc: Y.Doc;
   hydrate: () => Promise<void>;
   retryHydrate: () => Promise<void>;
@@ -78,11 +83,34 @@ function getDatabase() {
           device_caregiver_id TEXT NOT NULL,
           demo_event_ids TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS sync_state (
+          id INTEGER PRIMARY KEY NOT NULL,
+          last_seq INTEGER NOT NULL,
+          pending_claims TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS outbox (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ciphertext TEXT NOT NULL,
+          iv TEXT NOT NULL,
+          tag TEXT NOT NULL
+        );
       `);
       return db;
     })();
   }
   return databasePromise;
+}
+
+export function getScheduleDatabase() {
+  return getDatabase();
+}
+
+export function applyRemoteUpdate(update: Uint8Array) {
+  Y.applyUpdate(ydoc, update, 'remote');
+}
+
+export function encodeSnapshot(): Uint8Array {
+  return Y.encodeStateAsUpdate(ydoc);
 }
 
 function asUpdate(value: unknown): Uint8Array | null {
@@ -144,10 +172,13 @@ async function loadPersistedState() {
     if (row) {
       const update = asUpdate(row.ydoc);
       if (!update) throw new Error('Saved calendar could not be read');
-      if (update.byteLength > 0) Y.applyUpdate(ydoc, update);
+      if (update.byteLength > 0) Y.applyUpdate(ydoc, update, 'load');
     }
     if (generation !== loadGeneration) return;
     persistenceEnabled = true;
+    const { prepareSync } = require('../sync/syncEngine') as { prepareSync: () => Promise<void> };
+    if (generation !== loadGeneration) return;
+    await prepareSync();
     useScheduleStore.setState({
       ready: true,
       loadError: '',
@@ -277,9 +308,10 @@ function writeEvent(input: NewEvent & { id: string }) {
   eventsMap().set(input.id, map);
 }
 
-ydoc.on('update', () => {
+ydoc.on('update', (update, origin) => {
   publish();
-  schedulePersist();
+  if (origin !== 'load') schedulePersist();
+  if (origin !== 'load' && origin !== 'remote') emitLocalUpdate(update);
 });
 
 export const useScheduleStore = create<ScheduleState>((set, get) => ({
@@ -290,6 +322,10 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   children: [],
   deviceCaregiverId: '',
   demoEventIds: [],
+  paired: false,
+  syncStatus: 'synced',
+  syncWaiting: 0,
+  unsyncedClaimIds: [],
   ydoc,
   hydrate: () => {
     if (!hydratePromise) hydratePromise = loadPersistedState();
@@ -341,6 +377,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
     if (!map) return;
     const fields = (Object.keys(patch) as (keyof EventPatch)[]).filter((field) => patch[field] !== undefined);
     if (fields.length === 0) return;
+    const caregiverChanged = patch.caregiverId !== undefined && String(map.get('caregiverId') ?? '') !== patch.caregiverId;
     ydoc.transact(() => {
       for (const field of fields) {
         const value = patch[field];
@@ -350,6 +387,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
       }
       stamp(map);
     });
+    if (caregiverChanged) emitLocalClaim(id);
   },
   updateEventField: (id, field, value) => {
     get().updateEventFields(id, { [field]: value } as EventPatch);

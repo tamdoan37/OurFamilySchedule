@@ -52,7 +52,15 @@ export function EventFields({
         open={picker === 'start'}
         onOpen={() => setPicker('start')}
         onClose={() => setPicker(null)}
-        onChange={(picked) => onChange({ ...value, start: applyTime(value.start, picked) })}
+        onChange={(picked) => {
+          const nextStart = applyTime(value.start, picked);
+          const previous = Number.isNaN(value.start.getTime()) ? nextStart.getTime() : value.start.getTime();
+          const delta = nextStart.getTime() - previous;
+          const nextEnd = Number.isNaN(value.end.getTime())
+            ? new Date(nextStart.getTime() + 60 * 60 * 1000)
+            : new Date(value.end.getTime() + delta);
+          onChange({ ...value, start: nextStart, end: nextEnd });
+        }}
       />
       <DateField
         label="End"

@@ -16,14 +16,16 @@ export default function EditEventScreen() {
   const children = useScheduleStore((state) => state.children);
   const updateEventFields = useScheduleStore((state) => state.updateEventFields);
   const [loadedId, setLoadedId] = useState(event?.id ?? '');
+  const [original, setOriginal] = useState<AppEvent | null>(() => event ?? null);
   const [draft, setDraft] = useState<EventDraftFields | null>(() => (event ? toDraft(event) : null));
   const [showErrors, setShowErrors] = useState(false);
   if (event && event.id !== loadedId) {
     setLoadedId(event.id);
+    setOriginal(event);
     setDraft(toDraft(event));
   }
 
-  if (!id || !event || !draft) {
+  if (!id || !event || !draft || !original) {
     return (
       <View style={styles.missing}>
         <Text style={styles.note}>This event is not on the timeline.</Text>
@@ -35,21 +37,15 @@ export default function EditEventScreen() {
   const problems = draftProblems(draft);
 
   async function save() {
-    if (!event || !draft) return;
+    if (!event || !draft || !original) return;
     if (draftProblems(draft).length > 0) {
       setShowErrors(true);
       return;
     }
-    updateEventFields(event.id, {
-      title: draft.title.trim(),
-      startTime: toOffsetISO(draft.start),
-      endTime: toOffsetISO(draft.end),
-      location: draft.location.trim(),
-      childIds: draft.childIds,
-      caregiverId: draft.caregiverId,
-      icon: draft.icon.trim(),
-    });
-    if (event.calendarEventId) {
+    const patch = changedFields(original, draft);
+    if (Object.keys(patch).length > 0) updateEventFields(event.id, patch);
+    const calendarFields = patch.title !== undefined || patch.startTime !== undefined || patch.endTime !== undefined || patch.location !== undefined;
+    if (event.calendarEventId && calendarFields) {
       try {
         const permission = await ExpoCalendar.requestCalendarPermissionsAsync();
         if (permission.status !== 'granted') {
@@ -88,6 +84,28 @@ function toDraft(event: AppEvent): EventDraftFields {
     caregiverId: event.caregiverId,
     icon: event.icon,
   };
+}
+
+function changedFields(original: AppEvent, draft: EventDraftFields) {
+  const patch: {
+    title?: string;
+    startTime?: string;
+    endTime?: string;
+    location?: string;
+    childIds?: string[];
+    caregiverId?: string;
+    icon?: string;
+  } = {};
+  if (draft.title.trim() !== original.title) patch.title = draft.title.trim();
+  if (draft.start.getTime() !== new Date(original.startTime).getTime()) patch.startTime = toOffsetISO(draft.start);
+  if (draft.end.getTime() !== new Date(original.endTime).getTime()) patch.endTime = toOffsetISO(draft.end);
+  if (draft.location.trim() !== original.location) patch.location = draft.location.trim();
+  if (draft.childIds.length !== original.childIds.length || draft.childIds.some((id, index) => id !== original.childIds[index])) {
+    patch.childIds = draft.childIds;
+  }
+  if (draft.caregiverId !== original.caregiverId) patch.caregiverId = draft.caregiverId;
+  if (draft.icon.trim() !== original.icon) patch.icon = draft.icon.trim();
+  return patch;
 }
 
 const styles = StyleSheet.create({

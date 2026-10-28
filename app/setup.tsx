@@ -36,6 +36,7 @@ export default function SetupScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Family setup</Text>
       <Text style={styles.sub}>Add the people who share this calendar. This phone's person stays on this phone.</Text>
+      <Button title="Join an existing family" onPress={() => router.push('/settings')} />
 
       <Text style={styles.heading}>Caregivers</Text>
       <TextInput value={caregiverName} onChangeText={setCaregiverName} placeholder="Name" style={styles.input} />

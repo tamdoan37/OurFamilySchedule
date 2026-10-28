@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, Button } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { useScheduleStore } from '../src/store/scheduleStore';
+import SyncStatus from '../src/components/SyncStatus';
+import { startSync } from '../src/sync/syncEngine';
 
 export default function RootLayout() {
   const hydrate = useScheduleStore((state) => state.hydrate);
@@ -11,6 +13,7 @@ export default function RootLayout() {
   const loadError = useScheduleStore((state) => state.loadError);
   const caregivers = useScheduleStore((state) => state.caregivers);
   const deviceCaregiverId = useScheduleStore((state) => state.deviceCaregiverId);
+  const paired = useScheduleStore((state) => state.paired);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -19,19 +22,29 @@ export default function RootLayout() {
   }, [hydrate]);
 
   useEffect(() => {
+    if (ready) startSync();
+  }, [ready]);
+
+  useEffect(() => {
     if (!ready || pathname === '/setup') return;
     const ownerKnown = caregivers.some((person) => person.id === deviceCaregiverId);
-    if (caregivers.length === 0 || !ownerKnown) router.replace('/setup');
-  }, [ready, caregivers, deviceCaregiverId, pathname, router]);
+    if (pathname === '/settings') {
+      if (paired && caregivers.length > 0 && !ownerKnown) router.replace('/setup');
+      return;
+    }
+    if (caregivers.length === 0 && !paired) router.replace('/setup');
+    else if (caregivers.length > 0 && !ownerKnown) router.replace('/setup');
+  }, [ready, caregivers, deviceCaregiverId, paired, pathname, router]);
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      <Stack>
+      <Stack screenOptions={{ headerRight: () => <SyncStatus /> }}>
         <Stack.Screen name="index" options={{ title: 'OurFamilySchedule' }} />
         <Stack.Screen name="setup" options={{ title: 'Family setup' }} />
         <Stack.Screen name="capture" options={{ title: 'Scan Schedule' }} />
         <Stack.Screen name="timeline" options={{ title: 'Timeline' }} />
         <Stack.Screen name="event/[id]" options={{ title: 'Edit event' }} />
+        <Stack.Screen name="settings" options={{ title: 'Pairing' }} />
       </Stack>
       {!ready && (
         <View style={styles.loading}>

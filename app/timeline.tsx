@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Modal, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as ExpoCalendar from 'expo-calendar';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { useScheduleStore } from '../src/store/scheduleStore';
 import { AppEvent, Caregiver } from '../src/types';
@@ -19,12 +20,21 @@ export default function TimelineScreen() {
   const unclaimEvent = useScheduleStore((state) => state.unclaimEvent);
   const updateEventField = useScheduleStore((state) => state.updateEventField);
   const deleteEvent = useScheduleStore((state) => state.deleteEvent);
+  const unsyncedClaimIds = useScheduleStore((state) => state.unsyncedClaimIds);
   const [filter, setFilter] = useState<Filter>({ kind: 'all', childId: '' });
+  const [showPast, setShowPast] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [menuMode, setMenuMode] = useState<MenuMode>('actions');
+  const [notice, setNotice] = useState<{ eventId: string; previousId: string; name: string } | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sorted = events.filter((event) => !event.deleted).sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
-  const shown = sorted.filter((event) => matchesFilter(event, filter, deviceCaregiverId));
+  const todayStart = startOfDay(new Date());
+  const upcoming = sorted.filter((event) => {
+    const time = Date.parse(event.startTime);
+    return Number.isNaN(time) || startOfDay(new Date(time)) >= todayStart;
+  });
+  const shown = (showPast ? sorted : upcoming).filter((event) => matchesFilter(event, filter, deviceCaregiverId));
   const showingDemo = shown.some((event) => demoEventIds.includes(event.id));
   const twoLanes = caregivers.length === 2;
   const left = twoLanes ? caregivers[0] : undefined;
@@ -43,15 +53,65 @@ export default function TimelineScreen() {
   }
 
   function confirmDelete(id: string) {
+    const event = sorted.find((item) => item.id === id);
     closeMenu();
     Alert.alert('Delete this event?', 'It will be removed from the timeline.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteEvent(id) },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          if (event?.calendarEventId) {
+            setTimeout(() => askCalendarRemoval(id, event.calendarEventId), 300);
+          } else {
+            deleteEvent(id);
+          }
+        },
+      },
     ]);
+  }
+
+  function askCalendarRemoval(id: string, calendarEventId: string) {
+    Alert.alert('Also remove from your phone calendar?', undefined, [
+      { text: 'Keep it', onPress: () => deleteEvent(id) },
+      { text: 'Remove', style: 'destructive', onPress: () => { void removeFromPhone(id, calendarEventId); } },
+    ]);
+  }
+
+  async function removeFromPhone(id: string, calendarEventId: string) {
+    try {
+      const permission = await ExpoCalendar.requestCalendarPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Calendar permission was not allowed. It was removed in this app.');
+      } else {
+        await ExpoCalendar.deleteEventAsync(calendarEventId);
+      }
+    } catch {
+      Alert.alert('Could not remove it from the phone calendar. It was removed in this app.');
+    }
+    deleteEvent(id);
+  }
+
+  function announce(eventId: string, previousId: string, nextId: string) {
+    if (previousId === nextId) return;
+    const name = caregivers.find((person) => person.id === nextId)?.name ?? 'Unassigned';
+    setNotice({ eventId, previousId, name });
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
+  }
+
+  function undoAssign() {
+    if (!notice) return;
+    updateEventField(notice.eventId, 'caregiverId', notice.previousId);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNotice(null);
   }
 
   return (
     <View style={styles.container}>
+      <Pressable style={styles.pastButton} onPress={() => setShowPast((current) => !current)}>
+        <Text style={styles.pastText}>{showPast ? 'Hide past events' : 'Show past events'}</Text>
+      </Pressable>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterBar} contentContainerStyle={styles.filters}>
         <Chip label="All" on={filter.kind === 'all'} onPress={() => setFilter({ kind: 'all', childId: '' })} />
         <Chip label="Mine" on={filter.kind === 'mine'} onPress={() => setFilter({ kind: 'mine', childId: '' })} />
@@ -75,7 +135,11 @@ export default function TimelineScreen() {
             <Text style={{ color: right.color, fontWeight: '700' }}>{right.name}</Text>
           </View>
         )}
-        {shown.length === 0 && <Text style={styles.empty}>{sorted.length === 0 ? 'No events yet. Scan a schedule!' : 'Nothing in this filter.'}</Text>}
+        {shown.length === 0 && (
+          <Text style={styles.empty}>
+            {sorted.length === 0 ? 'No events yet. Scan a schedule!' : !showPast && upcoming.length === 0 ? 'Nothing coming up.' : 'Nothing in this filter.'}
+          </Text>
+        )}
         {days.map((day) => (
           <View key={day.key} style={styles.day}>
             <Text style={styles.dayHeading}>{day.label}</Text>
@@ -94,11 +158,15 @@ export default function TimelineScreen() {
                       left={left}
                       right={right}
                       clash={sameCaregiverClash(event, sorted)}
+                      waiting={unsyncedClaimIds.includes(event.id)}
                       onEdit={() => router.push(`/event/${event.id}`)}
                       onMenu={() => openMenu(event.id)}
                       onClaim={() => claimEvent(event.id)}
                       onUnclaim={() => unclaimEvent(event.id)}
-                      onAssign={(caregiverId) => updateEventField(event.id, 'caregiverId', caregiverId)}
+                      onAssign={(caregiverId) => {
+                        announce(event.id, event.caregiverId, caregiverId);
+                        updateEventField(event.id, 'caregiverId', caregiverId);
+                      }}
                     />
                   ))}
                 </View>
@@ -132,7 +200,11 @@ export default function TimelineScreen() {
                 title="Reassign"
                 people={[{ id: '', name: 'Unassigned', color: '#666' }, ...caregivers]}
                 selected={menuEvent.caregiverId}
-                onPick={(id) => { updateEventField(menuEvent.id, 'caregiverId', id); closeMenu(); }}
+                onPick={(id) => {
+                  announce(menuEvent.id, menuEvent.caregiverId, id);
+                  updateEventField(menuEvent.id, 'caregiverId', id);
+                  closeMenu();
+                }}
               />
             )}
             {menuMode === 'backup' && menuEvent && (
@@ -149,6 +221,11 @@ export default function TimelineScreen() {
           </View>
         </View>
       </Modal>
+      {notice && (
+        <Pressable style={styles.toast} onPress={undoAssign}>
+          <Text style={styles.toastText}>Given to {notice.name} · Undo</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -162,6 +239,7 @@ function EventCard({
   left,
   right,
   clash,
+  waiting,
   onEdit,
   onMenu,
   onClaim,
@@ -176,13 +254,13 @@ function EventCard({
   left?: Caregiver;
   right?: Caregiver;
   clash: boolean;
+  waiting: boolean;
   onEdit: () => void;
   onMenu: () => void;
   onClaim: () => void;
   onUnclaim: () => void;
   onAssign: (caregiverId: string) => void;
 }) {
-  const skipPress = useRef(false);
   const caregiver = caregivers.find((person) => person.id === event.caregiverId);
   const backup = caregivers.find((person) => person.id === event.backupCaregiverId);
   const names = children.filter((child) => event.childIds.includes(child.id)).map((child) => child.name);
@@ -190,13 +268,7 @@ function EventCard({
   const mine = !!event.caregiverId && event.caregiverId === deviceCaregiverId;
   const card = (
     <Pressable
-      onPress={() => {
-        if (skipPress.current) {
-          skipPress.current = false;
-          return;
-        }
-        onEdit();
-      }}
+      onPress={onEdit}
       onLongPress={onMenu}
       delayLongPress={350}
       style={[
@@ -214,25 +286,23 @@ function EventCard({
       {names.length > 0 && <Text>{names.join(', ')}</Text>}
       {event.notes ? <Text>{event.notes}</Text> : null}
       {unassigned && <Text style={styles.claim}>Unassigned</Text>}
-      {laneCount >= 3 && caregiver && <Text style={[styles.badge, { backgroundColor: caregiver.color }]}>{caregiver.name}</Text>}
-      {laneCount < 3 && caregiver && <Text style={{ color: caregiver.color }}>{caregiver.name}</Text>}
+      {caregiver && waiting && (
+        <View>
+          <Text style={[styles.badge, styles.badgeWaiting, { borderColor: caregiver.color, color: caregiver.color }]}>{caregiver.name}</Text>
+          <Text style={styles.waiting}>waiting to sync</Text>
+        </View>
+      )}
+      {caregiver && !waiting && laneCount >= 3 && <Text style={[styles.badge, { backgroundColor: caregiver.color }]}>{caregiver.name}</Text>}
+      {caregiver && !waiting && laneCount < 3 && <Text style={{ color: caregiver.color }}>{caregiver.name}</Text>}
       {backup && <Text>Backup: {backup.name}</Text>}
       {clash && <Text style={styles.clash}>Same caregiver, overlapping times</Text>}
       {unassigned && (
-        <Pressable
-          style={styles.action}
-          onPressIn={() => { skipPress.current = true; }}
-          onPress={onClaim}
-        >
+        <Pressable style={styles.action} onPress={onClaim}>
           <Text style={styles.actionText}>Claim</Text>
         </Pressable>
       )}
       {mine && (
-        <Pressable
-          style={styles.action}
-          onPressIn={() => { skipPress.current = true; }}
-          onPress={onUnclaim}
-        >
+        <Pressable style={styles.action} onPress={onUnclaim}>
           <Text style={styles.actionText}>Unclaim</Text>
         </Pressable>
       )}
@@ -385,6 +455,8 @@ function startOfDay(date: Date): number {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  pastButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, paddingTop: 8 },
+  pastText: { fontWeight: '600', color: '#333' },
   filterBar: { flexGrow: 0, height: 68 },
   filters: { paddingHorizontal: 16, paddingTop: 12, gap: 8, alignItems: 'center' },
   list: { flex: 1 },
@@ -407,6 +479,8 @@ const styles = StyleSheet.create({
   claim: { color: '#856404', fontStyle: 'italic', marginTop: 4 },
   clash: { color: '#9b1c1c', fontWeight: '700', marginTop: 4 },
   badge: { alignSelf: 'flex-start', color: '#fff', fontWeight: '700', overflow: 'hidden', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginTop: 4 },
+  badgeWaiting: { backgroundColor: 'transparent', borderWidth: 1, borderStyle: 'dashed' },
+  waiting: { color: '#666', fontSize: 12, marginTop: 4 },
   action: { minHeight: 44, marginTop: 8, borderRadius: 12, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
   actionText: { fontWeight: '700' },
   chip: { minHeight: 44, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center', backgroundColor: '#f8f9fa' },
@@ -419,4 +493,16 @@ const styles = StyleSheet.create({
   sheetRow: { minHeight: 44, justifyContent: 'center' },
   sheetText: { fontSize: 16 },
   deleteText: { color: '#9b1c1c', fontWeight: '700' },
+  toast: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 24,
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: '#111',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  toastText: { color: '#fff', fontWeight: '600' },
 });
