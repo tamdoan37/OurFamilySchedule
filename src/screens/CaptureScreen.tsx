@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, FlatList, TextInput, Image, StyleSheet, Button, Alert } from 'react-native';
-import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
 import * as Calendar from 'expo-calendar';
+import Constants from 'expo-constants';
 import { DraftEvent } from '../types';
 
 // Mock on-device parser until the native model bridge exists.
@@ -27,8 +27,17 @@ async function parseScheduleFromImage(_uri: string): Promise<DraftEvent[]> {
 }
 
 export default function CaptureScreen() {
-  const device = useCameraDevice('back');
-  const { hasPermission, requestPermission } = useCameraPermission();
+  // Expo Go has no vision-camera native module. Skip those hooks so this screen still opens.
+  if (Constants.appOwnership === 'expo') {
+    return <DraftReview cameraNote="Camera needs a development build. Sample rows are shown instead." />;
+  }
+  return <CameraCapture />;
+}
+
+function CameraCapture() {
+  const vision = require('react-native-vision-camera') as typeof import('react-native-vision-camera');
+  const device = vision.useCameraDevice('back');
+  const { hasPermission, requestPermission } = vision.useCameraPermission();
   const [photo, setPhoto] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<DraftEvent[]>([]);
   const [editing, setEditing] = useState<Record<string, Partial<DraftEvent>>>({});
@@ -43,13 +52,56 @@ export default function CaptureScreen() {
   }
 
   const takePhoto = async () => {
-    // Camera ref capture is not wired yet. This uses sample rows so the review screen can open.
     const mockUri = 'file://mock-schedule.jpg';
     setPhoto(mockUri);
-    const parsed = await parseScheduleFromImage(mockUri);
-    setDrafts(parsed);
+    setDrafts(await parseScheduleFromImage(mockUri));
   };
 
+  return (
+    <View style={styles.container}>
+      {!photo ? (
+        <View style={styles.cameraHalf}>
+          {device && <vision.Camera style={StyleSheet.absoluteFill} device={device} isActive />}
+          <Button title="Capture Schedule" onPress={takePhoto} />
+        </View>
+      ) : (
+        <Image source={{ uri: photo }} style={styles.photo} resizeMode="contain" />
+      )}
+      <DraftList drafts={drafts} editing={editing} setEditing={setEditing} onSaved={() => { setDrafts([]); setPhoto(null); }} />
+    </View>
+  );
+}
+
+function DraftReview({ cameraNote }: { cameraNote: string }) {
+  const [drafts, setDrafts] = useState<DraftEvent[]>([]);
+  const [editing, setEditing] = useState<Record<string, Partial<DraftEvent>>>({});
+
+  const loadSample = async () => {
+    setDrafts(await parseScheduleFromImage('file://mock-schedule.jpg'));
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.cameraHalf}>
+        <Text style={styles.cameraNote}>{cameraNote}</Text>
+        <Button title="Capture Schedule" onPress={loadSample} />
+      </View>
+      <DraftList drafts={drafts} editing={editing} setEditing={setEditing} onSaved={() => setDrafts([])} />
+    </View>
+  );
+}
+
+function DraftList({
+  drafts,
+  editing,
+  setEditing,
+  onSaved,
+}: {
+  drafts: DraftEvent[];
+  editing: Record<string, Partial<DraftEvent>>;
+  setEditing: React.Dispatch<React.SetStateAction<Record<string, Partial<DraftEvent>>>>;
+  onSaved: () => void;
+}) {
   const saveToCalendar = async () => {
     const { status } = await Calendar.requestCalendarPermissionsAsync();
     if (status !== 'granted') {
@@ -70,40 +122,29 @@ export default function CaptureScreen() {
       });
     }
     Alert.alert('Saved', `${drafts.length} events added to calendar`);
-    setDrafts([]);
-    setPhoto(null);
+    onSaved();
   };
 
   return (
-    <View style={styles.container}>
-      {!photo ? (
-        <View style={styles.cameraHalf}>
-          {device && <Camera style={StyleSheet.absoluteFill} device={device} isActive />}
-          <Button title="Capture Schedule" onPress={takePhoto} />
-        </View>
-      ) : (
-        <Image source={{ uri: photo }} style={styles.photo} resizeMode="contain" />
-      )}
-      <View style={styles.listHalf}>
-        <Text style={styles.demo}>DEMO DATA</Text>
-        <Text style={styles.header}>Review Drafts</Text>
-        <FlatList
-          data={drafts}
-          keyExtractor={item => item.id}
-          renderItem={({ item }) => (
-            <View style={styles.draft}>
-              <TextInput
-                value={editing[item.id]?.title ?? item.title}
-                onChangeText={t => setEditing(e => ({ ...e, [item.id]: { ...e[item.id], title: t } }))}
-                style={styles.input}
-              />
-              <Text>{item.startTime} – {item.endTime}</Text>
-              <Text>{item.location}</Text>
-            </View>
-          )}
-        />
-        {drafts.length > 0 && <Button title="Save to Calendar" onPress={saveToCalendar} />}
-      </View>
+    <View style={styles.listHalf}>
+      <Text style={styles.demo}>DEMO DATA</Text>
+      <Text style={styles.header}>Review Drafts</Text>
+      <FlatList
+        data={drafts}
+        keyExtractor={item => item.id}
+        renderItem={({ item }) => (
+          <View style={styles.draft}>
+            <TextInput
+              value={editing[item.id]?.title ?? item.title}
+              onChangeText={t => setEditing(e => ({ ...e, [item.id]: { ...e[item.id], title: t } }))}
+              style={styles.input}
+            />
+            <Text>{item.startTime} – {item.endTime}</Text>
+            <Text>{item.location}</Text>
+          </View>
+        )}
+      />
+      {drafts.length > 0 && <Button title="Save to Calendar" onPress={saveToCalendar} />}
     </View>
   );
 }
@@ -111,6 +152,7 @@ export default function CaptureScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   cameraHalf: { flex: 1, backgroundColor: '#000', justifyContent: 'flex-end' },
+  cameraNote: { color: '#fff', padding: 16 },
   photo: { flex: 1 },
   listHalf: { flex: 1, padding: 16 },
   demo: { fontSize: 12, fontWeight: '700', letterSpacing: 1, color: '#856404', marginBottom: 4 },
