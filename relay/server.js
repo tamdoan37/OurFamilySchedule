@@ -83,8 +83,22 @@ function tooManyRooms(ip) {
   return false;
 }
 
+function forwardedIp(value) {
+  if (process.env.TRUST_PROXY !== '1') return '';
+  const header = Array.isArray(value) ? value[0] : value;
+  if (typeof header !== 'string') return '';
+  const first = header.split(',')[0].trim();
+  if (!first || first.length > 80) return '';
+  return first;
+}
+
 function clientIp(req) {
-  const address = req.socket?.remoteAddress || req.ip || 'unknown';
+  const address = forwardedIp(req.headers['x-forwarded-for']) || req.socket?.remoteAddress || req.ip || 'unknown';
+  return String(address).slice(0, 80);
+}
+
+function socketIp(socket) {
+  const address = forwardedIp(socket.handshake?.headers?.['x-forwarded-for']) || socket.handshake?.address || 'unknown';
   return String(address).slice(0, 80);
 }
 
@@ -219,7 +233,7 @@ const io = new Server(server, {
 
 io.use((socket, next) => {
   const { roomId, token } = socket.handshake.auth || {};
-  const access = authorize(roomId, token, socket.handshake.address || 'unknown');
+  const access = authorize(roomId, token, socketIp(socket));
   if (access === 'limited') {
     next(new Error('limited'));
     return;

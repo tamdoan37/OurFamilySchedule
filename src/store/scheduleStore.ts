@@ -5,6 +5,7 @@ import * as Crypto from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
 import { AppEvent, Caregiver, Child, EventField } from '../types';
 import { emitLocalClaim, emitLocalUpdate } from '../sync/bridge';
+import { loadSyncEngine } from '../sync/loadSync';
 
 interface ScheduleState {
   ready: boolean;
@@ -106,11 +107,13 @@ function getDatabase() {
           part_index INTEGER NOT NULL,
           part_count INTEGER NOT NULL,
           payload BLOB NOT NULL,
+          received_at INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (group_id, part_index)
         );
       `);
       await addColumn(db, 'ALTER TABLE sync_state ADD COLUMN last_snapshot_at INTEGER NOT NULL DEFAULT 0');
       await addColumn(db, 'ALTER TABLE outbox ADD COLUMN snapshot_seq INTEGER');
+      await addColumn(db, 'ALTER TABLE inbound_parts ADD COLUMN received_at INTEGER NOT NULL DEFAULT 0');
       return db;
     })();
   }
@@ -223,9 +226,9 @@ async function loadPersistedState() {
     }
     if (generation !== loadGeneration) return;
     persistenceEnabled = true;
-    const { prepareSync } = require('../sync/syncEngine') as { prepareSync: () => Promise<void> };
+    const sync = loadSyncEngine();
     if (generation !== loadGeneration) return;
-    await prepareSync();
+    if (sync) await sync.prepareSync();
     useScheduleStore.setState({
       ready: true,
       loadError: '',

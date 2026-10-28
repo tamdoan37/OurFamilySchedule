@@ -37,6 +37,7 @@ npm start
 ```
 
 Production must use https://. A local http:// relay is only for a private test.
+Behind a reverse proxy, start the relay with `TRUST_PROXY=1` so the new-room limit uses the first `X-Forwarded-For` address for both HTTP and socket connections. Leave it unset otherwise.
 
 ## Demo Flow
 1. Open the app → tap **Load Demo Events**.

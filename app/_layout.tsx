@@ -1,11 +1,10 @@
-import '../src/utils/installCrypto';
 import { useEffect } from 'react';
 import { View, Text, StyleSheet, Button } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { useScheduleStore } from '../src/store/scheduleStore';
 import SyncStatus from '../src/components/SyncStatus';
-import { startSync } from '../src/sync/syncEngine';
+import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
 
 export default function RootLayout() {
   const hydrate = useScheduleStore((state) => state.hydrate);
@@ -23,7 +22,7 @@ export default function RootLayout() {
   }, [hydrate]);
 
   useEffect(() => {
-    if (ready) startSync();
+    if (ready && syncSupported()) loadSyncEngine()?.startSync();
   }, [ready]);
 
   useEffect(() => {

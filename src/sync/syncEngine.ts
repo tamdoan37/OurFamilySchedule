@@ -35,6 +35,7 @@ export async function prepareSync(): Promise<void> {
   const pairing = await readPairing();
   session = pairing ? { ...pairing, token: await roomToken(pairing.familyKey) } : null;
   const stored = await readSyncRow();
+  await pruneInboundParts();
   useScheduleStore.setState({
     paired: session !== null,
     syncWaiting: stored.waiting,
@@ -212,17 +213,21 @@ async function applyMessage(message: RelayMessage) {
   if (!part.groupId || part.count < 1 || part.index >= part.count) return;
   const db = await getScheduleDatabase();
   db.runSync(
-    'INSERT OR REPLACE INTO inbound_parts (group_id, part_index, part_count, payload) VALUES (?, ?, ?, ?)',
+    'INSERT OR REPLACE INTO inbound_parts (group_id, part_index, part_count, payload, received_at) VALUES (?, ?, ?, ?, ?)',
     part.groupId,
     part.index,
     part.count,
     part.payload,
+    Date.now(),
   );
   const rows = db.getAllSync<{ part_index: number; payload: unknown }>(
     'SELECT part_index, payload FROM inbound_parts WHERE group_id = ? ORDER BY part_index ASC',
     part.groupId,
   );
-  if (rows.length < part.count) return;
+  if (rows.length < part.count) {
+    await pruneInboundParts();
+    return;
+  }
   const pieces: Uint8Array[] = [];
   for (let index = 0; index < part.count; index += 1) {
     const row = rows.find((item) => item.part_index === index);
@@ -232,6 +237,18 @@ async function applyMessage(message: RelayMessage) {
   }
   db.runSync('DELETE FROM inbound_parts WHERE group_id = ?', part.groupId);
   applyRemoteUpdate(joinParts(pieces));
+  await pruneInboundParts();
+}
+
+async function pruneInboundParts() {
+  const db = await getScheduleDatabase();
+  const cutoff = Date.now() - DAY_MS;
+  db.runSync(
+    `DELETE FROM inbound_parts WHERE group_id IN (
+      SELECT group_id FROM inbound_parts GROUP BY group_id HAVING MIN(received_at) < ?
+    )`,
+    cutoff,
+  );
 }
 
 async function enqueue(update: Uint8Array) {

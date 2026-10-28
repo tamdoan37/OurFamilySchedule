@@ -2,9 +2,9 @@ import { useRef, useState } from 'react';
 import { View, Text, TextInput, StyleSheet, Button, Alert, ScrollView, Pressable } from 'react-native';
 import QRCode from 'qrcode';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { createFamily, currentPairingCode, joinFamily, leaveFamily } from '../src/sync/syncEngine';
 import { isRelayUrl, suggestedRelayUrl } from '../src/sync/pairing';
 import { eraseLocalFamily, useScheduleStore } from '../src/store/scheduleStore';
+import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
 
 export default function SettingsScreen() {
   const paired = useScheduleStore((state) => state.paired);
@@ -15,19 +15,23 @@ export default function SettingsScreen() {
   const handled = useRef(false);
 
   async function create() {
+    const sync = loadSyncEngine();
+    if (!sync) return;
     if (!isRelayUrl(relayUrl)) {
       Alert.alert('Enter a relay address that starts with http:// or https://');
       return;
     }
     try {
-      setCode(await createFamily(relayUrl.trim()));
+      setCode(await sync.createFamily(relayUrl.trim()));
     } catch {
       Alert.alert('Could not create the family key on this phone.');
     }
   }
 
   async function showCode() {
-    const existing = await currentPairingCode();
+    const sync = loadSyncEngine();
+    if (!sync) return;
+    const existing = await sync.currentPairingCode();
     if (!existing) {
       Alert.alert('This phone is not paired.');
       return;
@@ -42,7 +46,9 @@ export default function SettingsScreen() {
         text: 'Leave',
         style: 'destructive',
         onPress: () => {
-          void leaveFamily().then(() => setCode(null));
+          const sync = loadSyncEngine();
+          if (!sync) return;
+          void sync.leaveFamily().then(() => setCode(null));
         },
       },
     ]);
@@ -74,9 +80,11 @@ export default function SettingsScreen() {
   }
 
   async function acceptJoin(raw: string, erase: boolean) {
+    const sync = loadSyncEngine();
+    if (!sync) return;
     try {
       if (erase) eraseLocalFamily();
-      await joinFamily(raw);
+      await sync.joinFamily(raw);
       setScanning(false);
       setCode(null);
       Alert.alert('Joined. If this phone does not already have a person, pick who it belongs to.');
@@ -84,6 +92,15 @@ export default function SettingsScreen() {
       handled.current = false;
       Alert.alert('That code could not be joined.');
     }
+  }
+
+  if (!syncSupported()) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Pairing</Text>
+        <Text style={styles.note}>Sync needs a development build</Text>
+      </View>
+    );
   }
 
   if (scanning) {
