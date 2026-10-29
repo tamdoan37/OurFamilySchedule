@@ -116,7 +116,8 @@ function getDatabase() {
         );
         CREATE TABLE IF NOT EXISTS device_meta (
           id INTEGER PRIMARY KEY NOT NULL,
-          install_id TEXT NOT NULL
+          install_id TEXT NOT NULL,
+          notifications_asked INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS reminder_settings (
           id INTEGER PRIMARY KEY NOT NULL,
@@ -131,6 +132,7 @@ function getDatabase() {
       await addColumn(db, 'ALTER TABLE sync_state ADD COLUMN last_snapshot_at INTEGER NOT NULL DEFAULT 0');
       await addColumn(db, 'ALTER TABLE outbox ADD COLUMN snapshot_seq INTEGER');
       await addColumn(db, 'ALTER TABLE inbound_parts ADD COLUMN received_at INTEGER NOT NULL DEFAULT 0');
+      await addColumn(db, 'ALTER TABLE device_meta ADD COLUMN notifications_asked INTEGER NOT NULL DEFAULT 0');
       return db;
     })();
   }

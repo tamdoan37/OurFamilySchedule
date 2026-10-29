@@ -1,0 +1,24 @@
+apply plugin: 'com.android.library'
+
+group = 'com.ourfamilyschedule'
+version = '1.0.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useDefaultAndroidSdkVersions()
+
+android {
+  namespace "expo.modules.scheduleparser"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+dependencies {
+  implementation "com.google.mlkit:text-recognition:16.0.1"
+  implementation "com.google.mlkit:genai-prompt:1.0.0-beta4"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1"
+}

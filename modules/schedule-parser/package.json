@@ -1,0 +1,12 @@
+{
+  "name": "schedule-parser",
+  "version": "1.0.0",
+  "description": "On-device schedule flyer parser. Text and drafts stay on the phone.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

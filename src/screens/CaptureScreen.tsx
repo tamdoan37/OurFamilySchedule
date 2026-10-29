@@ -50,16 +50,24 @@ export default function CaptureScreen() {
   const [writableCalendars, setWritableCalendars] = useState<ExpoCalendar.Calendar[]>([]);
   const [androidCalendarId, setAndroidCalendarId] = useState('');
   const [saving, setSaving] = useState(false);
+  const [reading, setReading] = useState(false);
 
   async function openPhoto(uri: string) {
-    const drafts = await parseScheduleFromPhoto(uri);
-    setAllChildIds([]);
-    setAllCaregiverId('');
-    setAllIcon('');
-    setAllTouched({ children: false, caregiver: false, icon: false });
-    setShowErrors(false);
-    setPhotoUri(uri);
-    setRows(drafts.map((draft) => toReviewRow(draft, events, { childIds: [], caregiverId: '', icon: '' })));
+    setReading(true);
+    try {
+      const drafts = await parseScheduleFromPhoto(uri);
+      setAllChildIds([]);
+      setAllCaregiverId('');
+      setAllIcon('');
+      setAllTouched({ children: false, caregiver: false, icon: false });
+      setShowErrors(false);
+      setPhotoUri(uri);
+      setRows(drafts.map((draft) => toReviewRow(draft, events, { childIds: [], caregiverId: '', icon: '' })));
+    } catch {
+      Alert.alert('Could not read that photo.');
+    } finally {
+      setReading(false);
+    }
   }
 
   async function takePhoto() {
@@ -252,6 +260,13 @@ export default function CaptureScreen() {
   }
 
   if (!photoUri) {
+    if (reading) {
+      return (
+        <View style={styles.center}>
+          <Text>Reading the schedule…</Text>
+        </View>
+      );
+    }
     if (!permission) {
       return (
         <View style={styles.center}>
@@ -284,25 +299,28 @@ export default function CaptureScreen() {
   return (
     <ScrollView contentContainerStyle={styles.review} keyboardShouldPersistTaps="handled">
       <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="contain" />
-      <Text style={styles.demo}>DEMO DATA</Text>
-      <Text style={styles.note}>The parser is still sample rows. The photo above is the one you took or picked.</Text>
+      {rows.length === 0 && <Text style={styles.note}>No events were read from this photo.</Text>}
       <Button title="Take another" onPress={() => { setPhotoUri(null); setRows([]); }} />
 
-      <Text style={styles.heading}>Apply to all</Text>
-      <Text style={styles.label}>Children</Text>
-      <ChoiceRow
-        options={children.map((child) => ({ id: child.id, label: child.name, color: child.color }))}
-        selected={allChildIds}
-        onToggle={(id) => applyChildren(toggleId(allChildIds, id))}
-      />
-      <Text style={styles.label}>Caregiver on duty</Text>
-      <ChoiceRow
-        options={[{ id: '', label: 'Unassigned', color: '#666' }, ...caregivers.map((person) => ({ id: person.id, label: person.name, color: person.color }))]}
-        selected={[allCaregiverId]}
-        onToggle={applyCaregiver}
-      />
-      <Text style={styles.label}>Icon</Text>
-      <IconField value={allIcon} onChange={applyIcon} />
+      {rows.length > 0 && (
+        <>
+          <Text style={styles.heading}>Apply to all</Text>
+          <Text style={styles.label}>Children</Text>
+          <ChoiceRow
+            options={children.map((child) => ({ id: child.id, label: child.name, color: child.color }))}
+            selected={allChildIds}
+            onToggle={(id) => applyChildren(toggleId(allChildIds, id))}
+          />
+          <Text style={styles.label}>Caregiver on duty</Text>
+          <ChoiceRow
+            options={[{ id: '', label: 'Unassigned', color: '#666' }, ...caregivers.map((person) => ({ id: person.id, label: person.name, color: person.color }))]}
+            selected={[allCaregiverId]}
+            onToggle={applyCaregiver}
+          />
+          <Text style={styles.label}>Icon</Text>
+          <IconField value={allIcon} onChange={applyIcon} />
+        </>
+      )}
 
       {rows.map((row, index) => {
         const problems = row.action === 'skip' ? [] : draftProblems(row);
@@ -417,7 +435,6 @@ const styles = StyleSheet.create({
   cameraActions: { padding: 16, gap: 12, backgroundColor: 'rgba(0,0,0,0.35)' },
   review: { padding: 16, gap: 12 },
   photo: { height: 220, width: '100%', backgroundColor: '#111', borderRadius: 12 },
-  demo: { fontSize: 12, fontWeight: '700', letterSpacing: 1, color: '#856404' },
   note: { fontSize: 14, color: '#666' },
   heading: { fontSize: 18, fontWeight: '600', marginTop: 8 },
   label: { fontSize: 14, fontWeight: '600', marginTop: 4 },

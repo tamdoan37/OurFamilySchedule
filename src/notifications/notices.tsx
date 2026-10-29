@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useScheduleStore, getScheduleDatabase } from '../store/scheduleStore';
 import {
+  assignmentNoticesSuppressed,
   setClaimAttemptHandler,
   setClaimDeliveryFailedHandler,
   setScheduleObserver,
@@ -90,18 +91,20 @@ function observe(origin: unknown) {
   const before = snapshot;
   const state = useScheduleStore.getState();
   if (origin === 'remote') {
-    const me = state.deviceCaregiverId;
-    for (const event of state.events) {
-      const previous = before.get(event.id) ?? '';
-      if (!me || event.caregiverId !== me || previous === me) continue;
-      if (!event.lastEditedBy || event.lastEditedBy === me) continue;
-      const name = state.caregivers.find((person) => person.id === event.lastEditedBy)?.name || 'Someone';
-      useNotices.getState().push({
-        key: `assigned:${event.id}`,
-        kind: 'assigned',
-        eventId: event.id,
-        text: `${name} assigned you: ${event.title || 'an event'}`,
-      });
+    if (!assignmentNoticesSuppressed()) {
+      const me = state.deviceCaregiverId;
+      for (const event of state.events) {
+        const previous = before.get(event.id) ?? '';
+        if (!me || event.caregiverId !== me || previous === me) continue;
+        if (!event.lastEditedBy || event.lastEditedBy === me) continue;
+        const name = state.caregivers.find((person) => person.id === event.lastEditedBy)?.name || 'Someone';
+        useNotices.getState().push({
+          key: `assigned:${event.id}`,
+          kind: 'assigned',
+          eventId: event.id,
+          text: `${name} assigned you: ${event.title || 'an event'}`,
+        });
+      }
     }
     settleClaims();
   }

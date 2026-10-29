@@ -5,7 +5,7 @@ import { encryptDelta, decryptDelta } from '../utils/crypto';
 import { applyRemoteUpdate, encodeSnapshot, getScheduleDatabase, useScheduleStore } from '../store/scheduleStore';
 import { setLocalClaimHandler, setLocalUpdateHandler } from './bridge';
 import { encodeParts, joinParts, readPart } from './frame';
-import { emitClaimDeliveryFailed } from '../notifications/bridge';
+import { emitClaimDeliveryFailed, setSuppressAssignmentNotices } from '../notifications/bridge';
 import { getInstallId } from '../notifications/device';
 import { registerPushDevice } from '../notifications/push';
 import {
@@ -33,6 +33,7 @@ let chain: Promise<void> = Promise.resolve();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let localCount = 0;
 const sentIvs = new Set<string>();
+let catchUpDepth = 0;
 
 export async function prepareSync(): Promise<void> {
   const pairing = await readPairing();
@@ -178,6 +179,9 @@ async function receive(message: RelayMessage) {
 
 async function catchUp() {
   if (!session) return;
+  const suppressAssignments = catchUpDepth === 0 && (await readCursor()) === 0;
+  catchUpDepth += 1;
+  if (suppressAssignments) setSuppressAssignmentNotices(true);
   setStatus('syncing');
   try {
     for (let page = 0; page < 50; page += 1) {
@@ -197,6 +201,9 @@ async function catchUp() {
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Could not catch up');
     setStatus('offline', "Couldn't reach the relay");
+  } finally {
+    catchUpDepth -= 1;
+    if (catchUpDepth === 0) setSuppressAssignmentNotices(false);
   }
 }
 
@@ -485,6 +492,16 @@ export function syncNow() {
     await catchUp();
     await flush();
     await registerThisDevice();
+  });
+}
+
+export function backgroundSync(): Promise<void> {
+  return serial(async () => {
+    if (!useScheduleStore.getState().ready) await useScheduleStore.getState().hydrate();
+    await prepareSync();
+    if (!session) return;
+    await catchUp();
+    await flush();
   });
 }
 

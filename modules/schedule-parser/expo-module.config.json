@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ScheduleParserModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.scheduleparser.ScheduleParserModule"]
+  }
+}

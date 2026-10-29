@@ -1,7 +1,7 @@
 import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useScheduleStore } from '../store/scheduleStore';
-import { ensureNotificationPermission } from './push';
+import { hasNotificationPermission } from './push';
 import { formatLead, planReminders } from './planReminders';
 
 Notifications.setNotificationHandler({
@@ -68,11 +68,11 @@ function scheduleRefresh() {
   }, 700);
 }
 
-async function refreshReminders() {
+export async function refreshReminders() {
   const ticket = ++generation;
   const state = useScheduleStore.getState();
   if (!state.ready) return;
-  const allowed = await ensureNotificationPermission().catch(() => false);
+  const allowed = await hasNotificationPermission().catch(() => false);
   if (!allowed || ticket !== generation) return;
   await Notifications.setNotificationChannelAsync('reminders', {
     name: 'Reminders',

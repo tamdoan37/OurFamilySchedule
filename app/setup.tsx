@@ -2,6 +2,13 @@ import { useState } from 'react';
 import { View, Text, TextInput, Button, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useScheduleStore } from '../src/store/scheduleStore';
+import { refreshReminders } from '../src/notifications/reminders';
+import {
+  markNotificationsAsked,
+  notificationsAlreadyAsked,
+  requestNotificationPermission,
+} from '../src/notifications/push';
+import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
 
 const COLORS = [
   { name: 'Red', value: '#FF6B6B' },
@@ -25,11 +32,44 @@ export default function SetupScreen() {
   const [phoneOwner, setPhoneOwner] = useState(() =>
     caregivers.some((person) => person.id === deviceCaregiverId) ? deviceCaregiverId : '',
   );
+  const [explain, setExplain] = useState(false);
+  const [asking, setAsking] = useState(false);
 
   async function finish() {
-    if (!phoneOwner) return;
+    if (!phoneOwner || asking) return;
     await setDeviceCaregiver(phoneOwner);
-    router.replace('/');
+    if (await notificationsAlreadyAsked()) {
+      router.replace('/');
+      return;
+    }
+    setExplain(true);
+  }
+
+  async function answer(allow: boolean) {
+    if (asking) return;
+    setAsking(true);
+    try {
+      if (allow) {
+        await requestNotificationPermission().catch(() => false);
+        await refreshReminders().catch(() => undefined);
+        if (syncSupported()) loadSyncEngine()?.syncNow();
+      }
+      await markNotificationsAsked();
+      router.replace('/');
+    } finally {
+      setAsking(false);
+    }
+  }
+
+  if (explain) {
+    return (
+      <View style={styles.explain}>
+        <Text style={styles.title}>Reminders</Text>
+        <Text style={styles.sub}>The person on duty gets reminders before each event</Text>
+        <Button title={asking ? 'Saving…' : 'Allow reminders'} onPress={() => void answer(true)} disabled={asking} />
+        <Button title="Not now" onPress={() => void answer(false)} disabled={asking} />
+      </View>
+    );
   }
 
   return (
@@ -104,4 +144,5 @@ const styles = StyleSheet.create({
   swatchLabel: { color: '#fff', fontWeight: '600' },
   choice: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#f8f9fa' },
   choiceOn: { borderWidth: 2, borderColor: '#111' },
+  explain: { flex: 1, justifyContent: 'center', padding: 24, gap: 16 },
 });

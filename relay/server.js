@@ -15,6 +15,7 @@ const RATE_LIMIT = 120;
 const NEW_ROOMS_PER_HOUR = 10;
 const HOUR = 60 * 60 * 1000;
 const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+const PUSH_INTERVAL = 5 * 60 * 1000;
 const allowedOrigins = (process.env.RELAY_CORS_ORIGINS || 'http://localhost:8081,http://localhost:19006')
   .split(',')
   .map((origin) => origin.trim())
@@ -50,9 +51,15 @@ db.exec(`
     device_id TEXT NOT NULL,
     push_token TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
+    last_push_at INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (room_id, device_id)
   );
 `);
+try {
+  db.exec('ALTER TABLE push_devices ADD COLUMN last_push_at INTEGER NOT NULL DEFAULT 0');
+} catch {
+  // Existing databases already have the column.
+}
 
 const buckets = new Map();
 
@@ -92,11 +99,12 @@ function tooManyRooms(ip) {
 
 function forwardedIp(value) {
   if (process.env.TRUST_PROXY !== '1') return '';
-  const header = Array.isArray(value) ? value[0] : value;
+  const header = Array.isArray(value) ? value[value.length - 1] : value;
   if (typeof header !== 'string') return '';
-  const first = header.split(',')[0].trim();
-  if (!first || first.length > 80) return '';
-  return first;
+  const parts = header.split(',');
+  const last = parts[parts.length - 1].trim();
+  if (!last || last.length > 80) return '';
+  return last;
 }
 
 function clientIp(req) {
@@ -190,9 +198,13 @@ app.post('/rooms/:roomId/devices', (req, res) => {
     res.status(400).json({ error: 'bad token' });
     return;
   }
-  db.prepare(
-    'INSERT OR REPLACE INTO push_devices (room_id, device_id, push_token, updated_at) VALUES (?, ?, ?, ?)',
-  ).run(roomId, deviceId, pushToken, Date.now());
+  db.prepare(`
+    INSERT INTO push_devices (room_id, device_id, push_token, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(room_id, device_id) DO UPDATE SET
+      push_token = excluded.push_token,
+      updated_at = excluded.updated_at
+  `).run(roomId, deviceId, pushToken, Date.now());
   res.json({ ok: true });
 });
 
@@ -232,11 +244,7 @@ app.post('/rooms/:roomId/messages', async (req, res) => {
   }
   io.to(roomId).emit('relay-message', { seq, ciphertext, iv, tag });
   const sender = typeof req.headers['x-device-id'] === 'string' ? req.headers['x-device-id'] : '';
-  try {
-    await notifyOthers(roomId, sender);
-  } catch {
-    console.error('Could not send a wake-up push');
-  }
+  notifyOthers(roomId, sender);
   res.json({ seq });
 });
 
@@ -271,27 +279,37 @@ function isExpoToken(token) {
     && token.endsWith(']');
 }
 
-async function notifyOthers(roomId, sender) {
+function notifyOthers(roomId, sender) {
+  const now = Date.now();
   const rows = db.prepare(
-    'SELECT device_id, push_token FROM push_devices WHERE room_id = ?',
+    'SELECT device_id, push_token, last_push_at FROM push_devices WHERE room_id = ?',
   ).all(roomId);
-  const messages = rows
-    .filter((row) => row.device_id !== sender && isExpoToken(row.push_token))
-    .map((row) => ({
+  const messages = [];
+  const mark = db.prepare(
+    'UPDATE push_devices SET last_push_at = ? WHERE room_id = ? AND device_id = ?',
+  );
+  for (const row of rows) {
+    if (row.device_id === sender || !isExpoToken(row.push_token)) continue;
+    if (now - (row.last_push_at || 0) < PUSH_INTERVAL) continue;
+    mark.run(now, roomId, row.device_id);
+    messages.push({
       to: row.push_token,
-      title: 'OurFamilySchedule',
-      body: 'Your family schedule was updated',
-      sound: 'default',
+      _contentAvailable: true,
+      priority: 'high',
       data: { kind: 'sync' },
-    }));
+    });
+  }
   if (messages.length === 0) return;
-  const response = await fetch(process.env.EXPO_PUSH_URL || 'https://exp.host/--/api/v2/push/send', {
+  void fetch(process.env.EXPO_PUSH_URL || 'https://exp.host/--/api/v2/push/send', {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(messages),
     signal: AbortSignal.timeout(4000),
+  }).then((response) => {
+    if (!response.ok) console.error('Could not send a wake-up push');
+  }).catch(() => {
+    console.error('Could not send a wake-up push');
   });
-  if (!response.ok) console.error('Could not send a wake-up push');
 }
 
 const server = http.createServer(app);

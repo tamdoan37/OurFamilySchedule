@@ -8,6 +8,7 @@ type SyncEngine = {
   leaveFamily: () => Promise<void>;
   currentPairingCode: () => Promise<string | null>;
   syncNow: () => void;
+  backgroundSync: () => Promise<void>;
 };
 
 export function syncSupported(): boolean {
