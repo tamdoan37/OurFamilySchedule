@@ -10,6 +10,7 @@ export type ReminderEvent = {
   backupCaregiverId: string;
   deleted?: boolean;
   timeTbd?: boolean;
+  cancelled?: boolean;
 };
 
 export type ReminderPlan = {
@@ -49,7 +50,7 @@ export function planReminders(input: {
   const leads = [...new Set(input.leads.map(clampLead))];
   const planned: ReminderPlan[] = [];
   for (const event of input.events) {
-    if (event.deleted || event.timeTbd) continue;
+    if (event.deleted || event.timeTbd || event.cancelled) continue;
     const start = Date.parse(event.startTime);
     if (!Number.isFinite(start) || start <= input.now || start > horizon) continue;
     const onDuty = event.caregiverId === me;

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { View, Text, TextInput, Button, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useScheduleStore } from '../src/store/scheduleStore';
@@ -9,6 +9,7 @@ import {
   requestNotificationPermission,
 } from '../src/notifications/push';
 import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
+import { useTheme } from '../src/theme';
 
 const COLORS = [
   { name: 'Red', value: '#FF6B6B' },
@@ -25,6 +26,7 @@ export default function SetupScreen() {
   const setDeviceCaregiver = useScheduleStore((state) => state.setDeviceCaregiver);
   const deviceCaregiverId = useScheduleStore((state) => state.deviceCaregiverId);
   const router = useRouter();
+  const styles = useSetupStyles();
   const [caregiverName, setCaregiverName] = useState('');
   const [caregiverColor, setCaregiverColor] = useState(COLORS[0].value);
   const [childName, setChildName] = useState('');
@@ -121,6 +123,7 @@ export default function SetupScreen() {
 }
 
 function ColorRow({ selected, onPick }: { selected: string; onPick: (color: string) => void }) {
+  const styles = useSetupStyles();
   return (
     <View style={styles.colors}>
       {COLORS.map((color) => (
@@ -132,17 +135,20 @@ function ColorRow({ selected, onPick }: { selected: string; onPick: (color: stri
   );
 }
 
-const styles = StyleSheet.create({
-  container: { padding: 24, gap: 12 },
-  title: { fontSize: 28, fontWeight: 'bold' },
-  sub: { fontSize: 14, color: '#666' },
-  heading: { fontSize: 18, fontWeight: '600', marginTop: 12 },
-  input: { borderBottomWidth: 1, borderColor: '#ccc', fontSize: 16, minHeight: 44 },
-  colors: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  swatch: { minHeight: 44, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center' },
-  swatchOn: { borderWidth: 2, borderColor: '#111' },
-  swatchLabel: { color: '#fff', fontWeight: '600' },
-  choice: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#f8f9fa' },
-  choiceOn: { borderWidth: 2, borderColor: '#111' },
-  explain: { flex: 1, justifyContent: 'center', padding: 24, gap: 16 },
-});
+function useSetupStyles() {
+  const theme = useTheme();
+  return useMemo(() => StyleSheet.create({
+    container: { padding: 24, gap: 12, backgroundColor: theme.bg },
+    title: { fontSize: 28, fontWeight: 'bold', color: theme.text },
+    sub: { fontSize: 14, color: theme.muted },
+    heading: { fontSize: 18, fontWeight: '600', marginTop: 12, color: theme.text },
+    input: { borderBottomWidth: 1, borderColor: theme.border, fontSize: 16, minHeight: 44, color: theme.text },
+    colors: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    swatch: { minHeight: 44, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center' },
+    swatchOn: { borderWidth: 2, borderColor: theme.primary },
+    swatchLabel: { color: '#fff', fontWeight: '600' },
+    choice: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, backgroundColor: theme.card },
+    choiceOn: { borderWidth: 2, borderColor: theme.primary },
+    explain: { flex: 1, justifyContent: 'center', padding: 24, gap: 16, backgroundColor: theme.bg },
+  }), [theme]);
+}

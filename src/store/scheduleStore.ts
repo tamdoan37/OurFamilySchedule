@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 import * as Y from 'yjs';
 import * as Crypto from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
-import { AppEvent, Caregiver, Child, EventField } from '../types';
+import { AppEvent, Caregiver, ChecklistItem, Child, EventField } from '../types';
 import { emitLocalClaim, emitLocalUpdate } from '../sync/bridge';
 import { loadSyncEngine } from '../sync/loadSync';
 import { emitClaimAttempt, emitScheduleObserved } from '../notifications/bridge';
@@ -30,7 +30,7 @@ interface ScheduleState {
   addChild: (name: string, color: string) => string;
   setDeviceCaregiver: (caregiverId: string) => Promise<void>;
   addEvent: (input: NewEvent) => string;
-  updateEventField: (id: string, field: EventField, value: string | boolean | string[]) => void;
+  updateEventField: (id: string, field: EventField, value: string | boolean | string[] | ChecklistItem[]) => void;
   updateEventFields: (id: string, patch: EventPatch) => void;
   claimEvent: (id: string) => void;
   unclaimEvent: (id: string) => void;
@@ -52,6 +52,9 @@ type NewEvent = {
   scanId?: string;
   calendarEventId?: string;
   timeTbd?: boolean;
+  cancelled?: boolean;
+  coverRequestedBy?: string;
+  checklist?: ChecklistItem[];
 };
 
 type EventPatch = Partial<{
@@ -68,6 +71,9 @@ type EventPatch = Partial<{
   calendarEventId: string;
   deleted: boolean;
   timeTbd: boolean;
+  cancelled: boolean;
+  coverRequestedBy: string;
+  checklist: ChecklistItem[];
 }>;
 
 const ydocHolder: { current: Y.Doc } = { current: new Y.Doc() };
@@ -336,6 +342,9 @@ function readEvents(): AppEvent[] {
       lastEditedBy: String(map.get('lastEditedBy') ?? ''),
       lastEditedAt: String(map.get('lastEditedAt') ?? ''),
       timeTbd: map.get('timeTbd') === true,
+      cancelled: map.get('cancelled') === true,
+      coverRequestedBy: typeof map.get('coverRequestedBy') === 'string' ? String(map.get('coverRequestedBy')) : '',
+      checklist: readChecklist(map),
     });
   });
   return rows.sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
@@ -368,6 +377,27 @@ function readChildIds(map: Y.Map<unknown>): string[] {
   return [];
 }
 
+function readChecklist(map: Y.Map<unknown>): ChecklistItem[] {
+  const plain = map.get('checklist');
+  if (!Array.isArray(plain)) return [];
+  const items: ChecklistItem[] = [];
+  for (const item of plain) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as { id?: unknown; text?: unknown; done?: unknown };
+    if (typeof record.id !== 'string' || typeof record.text !== 'string') continue;
+    items.push({ id: record.id, text: record.text, done: record.done === true });
+  }
+  return items;
+}
+
+function writeChecklist(map: Y.Map<unknown>, items: ChecklistItem[]) {
+  map.set('checklist', items.filter((item) => item && typeof item.id === 'string' && typeof item.text === 'string').map((item) => ({
+    id: item.id,
+    text: item.text,
+    done: item.done === true,
+  })));
+}
+
 function writeEvent(input: NewEvent & { id: string }) {
   const map = new Y.Map<unknown>();
   map.set('title', input.title);
@@ -382,7 +412,10 @@ function writeEvent(input: NewEvent & { id: string }) {
   map.set('calendarEventId', input.calendarEventId ?? '');
   map.set('deleted', false);
   map.set('timeTbd', input.timeTbd === true);
+  map.set('cancelled', input.cancelled === true);
+  map.set('coverRequestedBy', input.coverRequestedBy ?? '');
   writeChildIds(map, input.childIds ?? []);
+  writeChecklist(map, input.checklist ?? []);
   stamp(map);
   eventsMap().set(input.id, map);
 }
@@ -466,7 +499,8 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
       for (const field of fields) {
         const value = patch[field];
         if (value === undefined) continue;
-        if (field === 'childIds' && Array.isArray(value)) writeChildIds(map, value);
+        if (field === 'childIds' && Array.isArray(value)) writeChildIds(map, value as string[]);
+        else if (field === 'checklist' && Array.isArray(value)) writeChecklist(map, value as ChecklistItem[]);
         else map.set(field, value);
       }
       stamp(map);

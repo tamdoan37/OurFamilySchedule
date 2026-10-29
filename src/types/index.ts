@@ -1,3 +1,9 @@
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
 export interface AppEvent {
   id: string;
   title: string;
@@ -15,6 +21,9 @@ export interface AppEvent {
   lastEditedBy: string;
   lastEditedAt: string;
   timeTbd: boolean;
+  cancelled: boolean;
+  coverRequestedBy: string;
+  checklist: ChecklistItem[];
 }
 
 export interface Caregiver {
@@ -61,4 +70,7 @@ export type EventField =
   | 'scanId'
   | 'calendarEventId'
   | 'deleted'
-  | 'timeTbd';
+  | 'timeTbd'
+  | 'cancelled'
+  | 'coverRequestedBy'
+  | 'checklist';

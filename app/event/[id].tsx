@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Button, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ExpoCalendar from 'expo-calendar';
 import { useScheduleStore, toOffsetISO } from '../../src/store/scheduleStore';
 import { EventDraftFields, EventFields } from '../../src/components/EventFields';
+import { PillButton } from '../../src/components/PillButton';
 import { draftProblems } from '../../src/parser/reviewDrafts';
 import { AppEvent } from '../../src/types';
+import { useTheme } from '../../src/theme';
 
 export default function EditEventScreen() {
   const router = useRouter();
@@ -19,6 +21,7 @@ export default function EditEventScreen() {
   const [original, setOriginal] = useState<AppEvent | null>(() => event ?? null);
   const [draft, setDraft] = useState<EventDraftFields | null>(() => (event ? toDraft(event) : null));
   const [showErrors, setShowErrors] = useState(false);
+  const theme = useTheme();
   if (event && event.id !== loadedId) {
     setLoadedId(event.id);
     setOriginal(event);
@@ -27,9 +30,9 @@ export default function EditEventScreen() {
 
   if (!id || !event || !draft || !original) {
     return (
-      <View style={styles.missing}>
-        <Text style={styles.note}>This event is not on the timeline.</Text>
-        <Button title="Back" onPress={() => router.back()} />
+      <View style={[styles.missing, { backgroundColor: theme.bg }]}>
+        <Text style={[styles.note, { color: theme.muted }]}>This event is not on the timeline.</Text>
+        <PillButton title="Back" variant="secondary" onPress={() => router.back()} />
       </View>
     );
   }
@@ -66,10 +69,10 @@ export default function EditEventScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+    <ScrollView style={{ backgroundColor: theme.bg }} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <EventFields value={draft} onChange={setDraft} caregivers={caregivers} children={children} />
       {showErrors && problems.map((problem) => <Text key={problem} style={styles.error}>{problem}</Text>)}
-      <Button title="Save" onPress={() => void save()} />
+      <PillButton title="Save" onPress={() => void save()} />
     </ScrollView>
   );
 }
@@ -84,6 +87,8 @@ function toDraft(event: AppEvent): EventDraftFields {
     caregiverId: event.caregiverId,
     icon: event.icon,
     timeTbd: event.timeTbd,
+    notes: event.notes,
+    checklist: event.checklist.map((item) => ({ ...item })),
   };
 }
 
@@ -97,6 +102,8 @@ function changedFields(original: AppEvent, draft: EventDraftFields) {
     caregiverId?: string;
     icon?: string;
     timeTbd?: boolean;
+    notes?: string;
+    checklist?: AppEvent['checklist'];
   } = {};
   if (draft.title.trim() !== original.title) patch.title = draft.title.trim();
   if (draft.start.getTime() !== new Date(original.startTime).getTime()) patch.startTime = toOffsetISO(draft.start);
@@ -107,8 +114,17 @@ function changedFields(original: AppEvent, draft: EventDraftFields) {
   }
   if (draft.caregiverId !== original.caregiverId) patch.caregiverId = draft.caregiverId;
   if (draft.icon.trim() !== original.icon) patch.icon = draft.icon.trim();
+  if ((draft.notes ?? '').trim() !== original.notes) patch.notes = (draft.notes ?? '').trim();
+  if (!sameChecklist(draft.checklist ?? [], original.checklist)) patch.checklist = draft.checklist ?? [];
   if ((draft.timeTbd === true) !== original.timeTbd) patch.timeTbd = draft.timeTbd === true;
   return patch;
+}
+
+function sameChecklist(left: AppEvent['checklist'], right: AppEvent['checklist']): boolean {
+  return left.length === right.length && left.every((item, index) => {
+    const other = right[index];
+    return item.id === other.id && item.text === other.text && item.done === other.done;
+  });
 }
 
 const styles = StyleSheet.create({

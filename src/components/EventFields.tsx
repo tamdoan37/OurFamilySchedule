@@ -1,7 +1,10 @@
 import { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, Button, Pressable, Platform } from 'react-native';
+import { View, Text, TextInput, StyleSheet, Pressable, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Caregiver, Child } from '../types';
+import * as Crypto from 'expo-crypto';
+import { Caregiver, ChecklistItem, Child } from '../types';
+import { PillButton } from './PillButton';
+import { useTheme } from '../theme';
 
 const ICONS = ['⚽', '🎹', '🩺', '🏫', '⭐'];
 
@@ -14,6 +17,8 @@ export type EventDraftFields = {
   caregiverId: string;
   icon: string;
   timeTbd?: boolean;
+  notes: string;
+  checklist: ChecklistItem[];
 };
 
 export function EventFields({
@@ -28,6 +33,17 @@ export function EventFields({
   children: Child[];
 }) {
   const [picker, setPicker] = useState<'date' | 'start' | 'end' | null>(null);
+  const [itemText, setItemText] = useState('');
+  const theme = useTheme();
+  const notes = value.notes ?? '';
+  const checklist = value.checklist ?? [];
+
+  function addItem() {
+    const text = itemText.trim();
+    if (!text) return;
+    onChange({ ...value, notes, checklist: [...checklist, { id: Crypto.randomUUID(), text, done: false }] });
+    setItemText('');
+  }
 
   return (
     <View style={styles.fields}>
@@ -35,7 +51,8 @@ export function EventFields({
         value={value.title}
         onChangeText={(title) => onChange({ ...value, title })}
         placeholder="Title"
-        style={styles.input}
+        placeholderTextColor={theme.muted}
+        style={[styles.input, { color: theme.text, borderColor: theme.border }]}
       />
       <DateField
         label="Date"
@@ -94,21 +111,60 @@ export function EventFields({
         value={value.location}
         onChangeText={(location) => onChange({ ...value, location })}
         placeholder="Location"
-        style={styles.input}
+        placeholderTextColor={theme.muted}
+        style={[styles.input, { color: theme.text, borderColor: theme.border }]}
       />
-      <Text style={styles.label}>Children</Text>
+      <TextInput
+        value={notes}
+        onChangeText={(next) => onChange({ ...value, notes: next, checklist })}
+        placeholder="Snack duty, bring shin guards…"
+        placeholderTextColor={theme.muted}
+        multiline
+        style={[styles.input, styles.notes, { color: theme.text, borderColor: theme.border }]}
+      />
+      <Text style={[styles.label, { color: theme.text }]}>Checklist</Text>
+      {checklist.map((item) => (
+        <View key={item.id} style={styles.checkRow}>
+          <Pressable
+            style={styles.checkMain}
+            onPress={() => onChange({
+              ...value,
+              notes,
+              checklist: checklist.map((entry) => (entry.id === item.id ? { ...entry, done: !entry.done } : entry)),
+            })}
+          >
+            <Text style={{ color: theme.text }}>{item.done ? '☑' : '☐'}</Text>
+            <Text style={[styles.checkText, { color: theme.text }, item.done && styles.checkDone]}>{item.text}</Text>
+          </Pressable>
+          <Pressable onPress={() => onChange({ ...value, notes, checklist: checklist.filter((entry) => entry.id !== item.id) })}>
+            <Text style={{ color: theme.danger, fontWeight: '600' }}>Remove</Text>
+          </Pressable>
+        </View>
+      ))}
+      <View style={styles.checkRow}>
+        <TextInput
+          value={itemText}
+          onChangeText={setItemText}
+          placeholder="Add an item"
+          placeholderTextColor={theme.muted}
+          style={[styles.input, styles.checkInput, { color: theme.text, borderColor: theme.border }]}
+          onSubmitEditing={addItem}
+        />
+        <PillButton title="Add" variant="secondary" compact onPress={addItem} />
+      </View>
+      <Text style={[styles.label, { color: theme.text }]}>Children</Text>
       <ChoiceRow
         options={children.map((child) => ({ id: child.id, label: child.name, color: child.color }))}
         selected={value.childIds}
         onToggle={(id) => onChange({ ...value, childIds: toggleId(value.childIds, id) })}
       />
-      <Text style={styles.label}>Caregiver on duty</Text>
+      <Text style={[styles.label, { color: theme.text }]}>Caregiver on duty</Text>
       <ChoiceRow
         options={[{ id: '', label: 'Unassigned', color: '#666' }, ...caregivers.map((person) => ({ id: person.id, label: person.name, color: person.color }))]}
         selected={[value.caregiverId]}
         onToggle={(id) => onChange({ ...value, caregiverId: id })}
       />
-      <Text style={styles.label}>Icon</Text>
+      <Text style={[styles.label, { color: theme.text }]}>Icon</Text>
       <IconField value={value.icon} onChange={(icon) => onChange({ ...value, icon })} />
     </View>
   );
@@ -148,7 +204,7 @@ export function IconField({ value, onChange }: { value: string; onChange: (icon:
           </Pressable>
         ))}
       </View>
-      <TextInput value={value} onChangeText={onChange} placeholder="Icon" style={styles.input} />
+          <TextInput value={value} onChangeText={onChange} placeholder="Icon" placeholderTextColor="#888" style={styles.input} />
     </View>
   );
 }
@@ -174,6 +230,7 @@ function DateField({
 }) {
   const invalid = Number.isNaN(value.getTime());
   const shown = invalid ? new Date() : value;
+  const theme = useTheme();
   const text = blankLabel
     ? blankLabel
     : invalid
@@ -183,9 +240,9 @@ function DateField({
         : shown.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return (
     <View>
-      <Text style={styles.label}>{label}</Text>
-      <Pressable onPress={onOpen} style={styles.pickerButton}>
-        <Text>{text}</Text>
+      <Text style={[styles.label, { color: theme.text }]}>{label}</Text>
+      <Pressable onPress={onOpen} style={[styles.pickerButton, { backgroundColor: theme.card }]}>
+        <Text style={{ color: blankLabel ? theme.muted : theme.text }}>{text}</Text>
       </Pressable>
       {open && (
         <DateTimePicker
@@ -198,7 +255,7 @@ function DateField({
           }}
         />
       )}
-      {open && Platform.OS === 'ios' && <Button title="Done" onPress={onClose} />}
+      {open && Platform.OS === 'ios' && <PillButton title="Done" variant="secondary" compact onPress={onClose} />}
     </View>
   );
 }
@@ -224,6 +281,12 @@ const styles = StyleSheet.create({
   note: { fontSize: 14, color: '#666' },
   label: { fontSize: 14, fontWeight: '600', marginTop: 4 },
   input: { borderBottomWidth: 1, borderColor: '#ccc', fontSize: 16, minHeight: 44 },
+  notes: { minHeight: 72, textAlignVertical: 'top', paddingTop: 8 },
+  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  checkMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 36 },
+  checkText: { flex: 1, fontSize: 15 },
+  checkDone: { textDecorationLine: 'line-through', opacity: 0.6 },
+  checkInput: { flex: 1 },
   pickerButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#f8f9fa' },
   choiceLine: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { minHeight: 44, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center', backgroundColor: '#fff' },

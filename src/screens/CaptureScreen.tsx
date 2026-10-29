@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { View, Text, Image, StyleSheet, Button, Alert, ScrollView, Pressable, Switch, Platform } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import { View, Text, Image, StyleSheet, Alert, ScrollView, Pressable, Switch, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -11,8 +11,10 @@ import { useScheduleStore, toOffsetISO } from '../store/scheduleStore';
 import { parseScheduleFromPhoto } from '../parser/parseSchedule';
 import { weeklyDates } from '../parser/fromText';
 import { draftProblems, findDuplicateId } from '../parser/reviewDrafts';
-import { DraftEvent } from '../types';
+import { DraftEvent, ChecklistItem } from '../types';
 import { ChoiceRow, EventDraftFields, EventFields, IconField } from '../components/EventFields';
+import { PillButton } from '../components/PillButton';
+import { Theme, useTheme } from '../theme';
 
 type ReviewRow = {
   key: string;
@@ -25,6 +27,8 @@ type ReviewRow = {
   childIds: string[];
   caregiverId: string;
   icon: string;
+  notes: string;
+  checklist: ChecklistItem[];
   customChildren: boolean;
   customCaregiver: boolean;
   customIcon: boolean;
@@ -56,6 +60,8 @@ export default function CaptureScreen() {
   const [androidCalendarId, setAndroidCalendarId] = useState('');
   const [saving, setSaving] = useState(false);
   const [reading, setReading] = useState(false);
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [untilKey, setUntilKey] = useState<string | null>(null);
 
   async function openPhoto(uri: string) {
@@ -227,6 +233,8 @@ export default function CaptureScreen() {
             location: string;
             scanId: string;
             timeTbd: boolean;
+            notes: string;
+            checklist: ChecklistItem[];
             childIds?: string[];
             caregiverId?: string;
             icon?: string;
@@ -238,6 +246,8 @@ export default function CaptureScreen() {
             location: row.location.trim(),
             scanId,
             timeTbd: row.timeTbd,
+            notes: row.notes.trim(),
+            checklist: row.checklist,
           };
           if (row.customChildren || allTouched.children) patch.childIds = row.childIds;
           if (row.customCaregiver || allTouched.caregiver) patch.caregiverId = row.caregiverId;
@@ -276,6 +286,8 @@ export default function CaptureScreen() {
             scanId,
             calendarEventId,
             timeTbd: row.timeTbd,
+            notes: row.notes.trim(),
+            checklist: row.checklist,
           });
         }
       }
@@ -306,8 +318,8 @@ export default function CaptureScreen() {
       return (
         <View style={styles.center}>
           <Text style={styles.note}>Camera permission is needed to take a photo of a schedule.</Text>
-          <Button title="Allow camera" onPress={() => void requestPermission()} />
-          <Button title="Photo library" onPress={() => void pickPhoto()} />
+          <PillButton title="Allow camera" onPress={() => void requestPermission()} />
+          <PillButton title="Photo library" variant="secondary" onPress={() => void pickPhoto()} />
         </View>
       );
     }
@@ -315,8 +327,8 @@ export default function CaptureScreen() {
       <View style={styles.cameraWrap}>
         <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
         <View style={styles.cameraActions}>
-          <Button title="Take photo" onPress={() => void takePhoto()} />
-          <Button title="Photo library" onPress={() => void pickPhoto()} />
+          <PillButton title="Take photo" onPress={() => void takePhoto()} />
+          <PillButton title="Photo library" variant="secondary" onPress={() => void pickPhoto()} />
         </View>
       </View>
     );
@@ -325,10 +337,10 @@ export default function CaptureScreen() {
   const saveCount = rows.reduce((sum, row) => sum + rowSaveCount(row), 0);
 
   return (
-    <ScrollView contentContainerStyle={styles.review} keyboardShouldPersistTaps="handled">
+    <ScrollView style={{ flex: 1, backgroundColor: theme.bg }} contentContainerStyle={styles.review} keyboardShouldPersistTaps="handled">
       <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="contain" />
       {rows.length === 0 && <Text style={styles.note}>No events were read from this photo.</Text>}
-      <Button title="Take another" onPress={() => { setPhotoUri(null); setRows([]); }} />
+      <PillButton title="Take another" variant="secondary" onPress={() => { setPhotoUri(null); setRows([]); }} />
 
       {rows.length > 0 && (
         <>
@@ -375,6 +387,8 @@ export default function CaptureScreen() {
                   caregiverId: row.caregiverId,
                   icon: row.icon,
                   timeTbd: row.timeTbd,
+                  notes: row.notes,
+                  checklist: row.checklist,
                 }}
                 caregivers={caregivers}
                 children={children}
@@ -399,7 +413,7 @@ export default function CaptureScreen() {
                       }}
                     />
                   )}
-                  {untilKey === row.key && Platform.OS === 'ios' && <Button title="Done" onPress={() => setUntilKey(null)} />}
+                  {untilKey === row.key && Platform.OS === 'ios' && <PillButton title="Done" variant="secondary" compact onPress={() => setUntilKey(null)} />}
                 </View>
               )}
               {!!row.rawText && <Text style={styles.raw}>{row.rawText}</Text>}
@@ -407,20 +421,20 @@ export default function CaptureScreen() {
                 <View>
                   <Text style={styles.already}>Already in your schedule</Text>
                   <View style={styles.choiceLine}>
-                    <Button title={row.action === 'skip' ? 'Skip (on)' : 'Skip'} onPress={() => updateRow(row.key, { action: 'skip' })} />
-                    <Button title={row.action === 'update' ? 'Update (on)' : 'Update'} onPress={() => updateRow(row.key, { action: 'update' })} />
+                    <PillButton compact variant={row.action === 'skip' ? 'primary' : 'secondary'} title={row.action === 'skip' ? 'Skip (on)' : 'Skip'} onPress={() => updateRow(row.key, { action: 'skip' })} />
+                    <PillButton compact variant={row.action === 'update' ? 'primary' : 'secondary'} title={row.action === 'update' ? 'Update (on)' : 'Update'} onPress={() => updateRow(row.key, { action: 'update' })} />
                   </View>
                 </View>
               ) : row.timeTbd && row.confidence < 0.5 ? (
                 <View style={styles.choiceLine}>
-                  <Button title={row.action === 'skip' ? 'Skip (on)' : 'Skip'} onPress={() => updateRow(row.key, { action: 'skip' })} />
-                  <Button title={row.action === 'save' ? 'Save (on)' : 'Save'} onPress={() => updateRow(row.key, { action: 'save' })} />
+                  <PillButton compact variant={row.action === 'skip' ? 'primary' : 'secondary'} title={row.action === 'skip' ? 'Skip (on)' : 'Skip'} onPress={() => updateRow(row.key, { action: 'skip' })} />
+                  <PillButton compact variant={row.action === 'save' ? 'primary' : 'secondary'} title={row.action === 'save' ? 'Save (on)' : 'Save'} onPress={() => updateRow(row.key, { action: 'save' })} />
                 </View>
               ) : null}
               {showRowErrors && problems.map((problem) => (
                 <Text key={problem} style={styles.error}>Row {index + 1}: {problem}</Text>
               ))}
-              <Button title="Delete" onPress={() => setRows((current) => current.filter((item) => item.key !== row.key))} />
+              <PillButton title="Delete" variant="secondary" compact onPress={() => setRows((current) => current.filter((item) => item.key !== row.key))} />
             </View>
           </Swipeable>
         );
@@ -437,7 +451,7 @@ export default function CaptureScreen() {
       ))}
       {addToPhone && Platform.OS === 'ios' && <Text style={styles.note}>New events use this iPhone's default calendar.</Text>}
 
-      <Button
+      <PillButton
         title={saving ? 'Saving…' : `Save ${saveCount} events`}
         onPress={() => void save()}
         disabled={saving || saveCount === 0}
@@ -465,6 +479,8 @@ function toReviewRow(
     childIds: shared.childIds,
     caregiverId: shared.caregiverId,
     icon: shared.icon,
+    notes: '',
+    checklist: [],
     customChildren: false,
     customCaregiver: false,
     customIcon: false,
@@ -497,29 +513,31 @@ function toggleId(ids: string[], id: string): string[] {
 }
 
 
-const styles = StyleSheet.create({
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, padding: 24 },
-  cameraWrap: { flex: 1, backgroundColor: '#000', justifyContent: 'flex-end' },
-  cameraActions: { padding: 16, gap: 12, backgroundColor: 'rgba(0,0,0,0.35)' },
-  review: { padding: 16, gap: 12 },
-  photo: { height: 220, width: '100%', backgroundColor: '#111', borderRadius: 12 },
-  note: { fontSize: 14, color: '#666' },
-  heading: { fontSize: 18, fontWeight: '600', marginTop: 8 },
-  label: { fontSize: 14, fontWeight: '600', marginTop: 4 },
-  rowLabel: { fontSize: 13, color: '#666' },
-  input: { borderBottomWidth: 1, borderColor: '#ccc', fontSize: 16, minHeight: 44 },
-  pickerButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#f8f9fa' },
-  draft: { padding: 12, marginVertical: 8, backgroundColor: '#f8f9fa', borderRadius: 12, gap: 8 },
-  check: { backgroundColor: '#fff3cd' },
-  checkText: { color: '#856404', fontWeight: '700' },
-  draftBad: { borderWidth: 2, borderColor: '#9b1c1c' },
-  error: { color: '#9b1c1c', fontWeight: '600' },
-  already: { color: '#856404', fontWeight: '700' },
-  raw: { color: '#666', fontSize: 13 },
-  choiceLine: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { minHeight: 44, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center', backgroundColor: '#fff' },
-  chipOn: { borderWidth: 2, borderColor: '#111' },
-  calendarRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  swipeDelete: { backgroundColor: '#9b1c1c', justifyContent: 'center', paddingHorizontal: 20, marginVertical: 8, borderRadius: 12 },
-  swipeDeleteText: { color: '#fff', fontWeight: '700' },
-});
+function makeStyles(theme: Theme) {
+  return StyleSheet.create({
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, padding: 24, backgroundColor: theme.bg },
+    cameraWrap: { flex: 1, backgroundColor: '#000', justifyContent: 'flex-end' },
+    cameraActions: { padding: 16, gap: 12, backgroundColor: 'rgba(0,0,0,0.35)' },
+    review: { padding: 16, gap: 12, backgroundColor: theme.bg },
+    photo: { height: 220, width: '100%', backgroundColor: '#111', borderRadius: 12 },
+    note: { fontSize: 14, color: theme.muted },
+    heading: { fontSize: 18, fontWeight: '600', marginTop: 8, color: theme.text },
+    label: { fontSize: 14, fontWeight: '600', marginTop: 4, color: theme.text },
+    rowLabel: { fontSize: 13, color: theme.muted },
+    input: { borderBottomWidth: 1, borderColor: theme.border, fontSize: 16, minHeight: 44, color: theme.text },
+    pickerButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, backgroundColor: theme.card },
+    draft: { padding: 12, marginVertical: 8, backgroundColor: theme.card, borderRadius: 16, gap: 8 },
+    check: { backgroundColor: theme.dark ? '#3f2a12' : '#fff3cd' },
+    checkText: { color: theme.dark ? '#fbbf24' : '#856404', fontWeight: '700' },
+    draftBad: { borderWidth: 2, borderColor: '#9b1c1c' },
+    error: { color: '#9b1c1c', fontWeight: '600' },
+    already: { color: theme.dark ? '#fbbf24' : '#856404', fontWeight: '700' },
+    raw: { color: theme.muted, fontSize: 13 },
+    choiceLine: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chip: { minHeight: 44, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center', backgroundColor: theme.bg },
+    chipOn: { borderWidth: 2, borderColor: theme.primary },
+    calendarRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    swipeDelete: { backgroundColor: '#9b1c1c', justifyContent: 'center', paddingHorizontal: 20, marginVertical: 8, borderRadius: 12 },
+    swipeDeleteText: { color: '#fff', fontWeight: '700' },
+  });
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, StyleSheet, Button, Alert, ScrollView, Pressable, AppState, Linking } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import QRCode from 'qrcode';
@@ -7,6 +7,7 @@ import { isRelayUrl, suggestedRelayUrl } from '../src/sync/pairing';
 import { eraseLocalFamily, useScheduleStore } from '../src/store/scheduleStore';
 import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
 import { refreshReminders } from '../src/notifications/reminders';
+import { useTheme } from '../src/theme';
 
 export default function SettingsScreen() {
   const paired = useScheduleStore((state) => state.paired);
@@ -15,6 +16,7 @@ export default function SettingsScreen() {
   const [scanning, setScanning] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const handled = useRef(false);
+  const styles = useSettingsStyles();
 
   async function create() {
     const sync = loadSyncEngine();
@@ -102,6 +104,8 @@ export default function SettingsScreen() {
         <Text style={styles.title}>Pairing</Text>
         <Text style={styles.note}>Sync needs a development build</Text>
         <ReminderChoices />
+        <Text style={styles.title}>Demo</Text>
+        <Button title="Remove demo events" onPress={removeDemoEvents} />
       </ScrollView>
     );
   }
@@ -165,11 +169,25 @@ export default function SettingsScreen() {
         </>
       )}
       <ReminderChoices />
+      <Text style={styles.title}>Demo</Text>
+      <Text style={styles.note}>Removes the sample events loaded from the home screen. Events you added stay.</Text>
+      <Button title="Remove demo events" onPress={removeDemoEvents} />
     </ScrollView>
   );
 }
 
+function removeDemoEvents() {
+  const ids = [...useScheduleStore.getState().demoEventIds];
+  if (ids.length === 0) {
+    Alert.alert('No demo events to remove.');
+    return;
+  }
+  const deleteEvent = useScheduleStore.getState().deleteEvent;
+  for (const id of ids) deleteEvent(id);
+}
+
 function ReminderChoices() {
+  const styles = useSettingsStyles();
   const leads = useScheduleStore((state) => state.reminderLeads);
   const setReminderLeads = useScheduleStore((state) => state.setReminderLeads);
   return (
@@ -243,6 +261,7 @@ function ReminderPermission() {
 }
 
 function LeadRow({ label, selected, onPick }: { label: string; selected: number; onPick: (minutes: number) => void }) {
+  const styles = useSettingsStyles();
   return (
     <View>
       <Text style={styles.label}>{label}</Text>
@@ -270,6 +289,7 @@ const LEAD_OPTIONS = [
 ];
 
 function PairingCode({ value }: { value: string }) {
+  const styles = useSettingsStyles();
   const qr = QRCode.create(value, { errorCorrectionLevel: 'M' });
   const size = qr.modules.size;
   const cell = 4;
@@ -289,19 +309,22 @@ function PairingCode({ value }: { value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { padding: 16, gap: 12 },
-  title: { fontSize: 22, fontWeight: 'bold' },
-  label: { fontSize: 14, fontWeight: '600', marginTop: 4 },
-  note: { fontSize: 14, color: '#666' },
-  input: { borderBottomWidth: 1, borderColor: '#ccc', fontSize: 16, minHeight: 44 },
-  cameraWrap: { flex: 1, backgroundColor: '#000', justifyContent: 'flex-end' },
-  cameraActions: { padding: 16, backgroundColor: 'rgba(0,0,0,0.35)' },
-  qr: { backgroundColor: '#fff', padding: 16, alignSelf: 'center' },
-  qrRow: { flexDirection: 'row' },
-  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  choice: { borderWidth: 1, borderColor: '#ccc', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
-  choiceOn: { borderColor: '#111', backgroundColor: '#111' },
-  choiceText: { fontSize: 14, color: '#333' },
-  choiceOnText: { fontSize: 14, color: '#fff' },
-});
+function useSettingsStyles() {
+  const theme = useTheme();
+  return useMemo(() => StyleSheet.create({
+    container: { padding: 16, gap: 12, backgroundColor: theme.bg },
+    title: { fontSize: 22, fontWeight: 'bold', color: theme.text },
+    label: { fontSize: 14, fontWeight: '600', marginTop: 4, color: theme.text },
+    note: { fontSize: 14, color: theme.muted },
+    input: { borderBottomWidth: 1, borderColor: theme.border, fontSize: 16, minHeight: 44, color: theme.text },
+    cameraWrap: { flex: 1, backgroundColor: '#000', justifyContent: 'flex-end' },
+    cameraActions: { padding: 16, backgroundColor: 'rgba(0,0,0,0.35)' },
+    qr: { backgroundColor: '#fff', padding: 16, alignSelf: 'center' },
+    qrRow: { flexDirection: 'row' },
+    choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    choice: { borderWidth: 1, borderColor: theme.border, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
+    choiceOn: { borderColor: theme.primary, backgroundColor: theme.primary },
+    choiceText: { fontSize: 14, color: theme.text },
+    choiceOnText: { fontSize: 14, color: theme.onPrimary },
+  }), [theme]);
+}

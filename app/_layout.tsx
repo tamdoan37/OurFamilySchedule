@@ -7,6 +7,7 @@ import SyncStatus from '../src/components/SyncStatus';
 import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
 import { ScheduleNotices, startNotices } from '../src/notifications/notices';
 import { startNotificationNavigation, startReminders } from '../src/notifications/reminders';
+import { useTheme } from '../src/theme';
 
 export default function RootLayout() {
   const hydrate = useScheduleStore((state) => state.hydrate);
@@ -18,6 +19,7 @@ export default function RootLayout() {
   const paired = useScheduleStore((state) => state.paired);
   const pathname = usePathname();
   const router = useRouter();
+  const theme = useTheme();
 
   useEffect(() => {
     void hydrate();
@@ -60,7 +62,15 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      <Stack screenOptions={{ headerRight: () => <SyncStatus /> }}>
+      <Stack
+        screenOptions={{
+          headerRight: () => <SyncStatus />,
+          headerStyle: { backgroundColor: theme.bg },
+          headerTintColor: theme.text,
+          headerTitleStyle: { color: theme.text },
+          contentStyle: { backgroundColor: theme.bg },
+        }}
+      >
         <Stack.Screen name="index" options={{ title: 'OurFamilySchedule' }} />
         <Stack.Screen name="setup" options={{ title: 'Family setup' }} />
         <Stack.Screen name="capture" options={{ title: 'Scan Schedule' }} />
@@ -70,8 +80,8 @@ export default function RootLayout() {
       </Stack>
       <ScheduleNotices onOpenEvent={(eventId) => router.push(`/event/${eventId}`)} />
       {!ready && (
-        <View style={styles.loading}>
-          <Text style={styles.loadingText}>{loadError || 'Loading…'}</Text>
+        <View style={[styles.loading, { backgroundColor: theme.bg }]}>
+          <Text style={[styles.loadingText, { color: theme.muted }]}>{loadError || 'Loading…'}</Text>
           {!!loadError && <Button title="Try again" onPress={() => void retryHydrate()} />}
         </View>
       )}

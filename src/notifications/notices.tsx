@@ -8,10 +8,11 @@ import {
   setClaimDeliveryFailedHandler,
   setScheduleObserver,
 } from './bridge';
+import { useTheme } from '../theme';
 
 type Notice = {
   key: string;
-  kind: 'assigned' | 'conflict';
+  kind: 'assigned' | 'conflict' | 'cover';
   eventId: string;
   text: string;
 };
@@ -38,6 +39,7 @@ let snapshot = new Map<string, string>();
 
 export function startNotices(): () => void {
   snapshot = caregiverSnapshot();
+  syncCoverNotices();
   setScheduleObserver(observe);
   setClaimAttemptHandler(rememberClaim);
   setClaimDeliveryFailedHandler(markClaimOffline);
@@ -59,24 +61,37 @@ export function ScheduleNotices({ onOpenEvent }: { onOpenEvent: (eventId: string
   const items = useNotices((state) => state.items);
   const dismiss = useNotices((state) => state.dismiss);
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
   if (items.length === 0) return null;
   return (
-    <View pointerEvents="box-none" style={[styles.wrap, { bottom: insets.bottom + 12 }]}>
+    <View pointerEvents="box-none" style={[styles.wrap, { bottom: insets.bottom + 88 }]}>
       {items.map((item) => (
-        <View key={item.key} style={styles.card}>
+        <View key={item.key} style={[styles.card, { backgroundColor: theme.sheet, borderColor: theme.border }]}>
           {item.kind === 'assigned' ? (
             <Pressable onPress={() => { dismiss(item.key); onOpenEvent(item.eventId); }}>
-              <Text style={styles.text}>{item.text}</Text>
+              <Text style={[styles.text, { color: theme.text }]}>{item.text}</Text>
             </Pressable>
+          ) : item.kind === 'cover' ? (
+            <>
+              <Text style={[styles.text, { color: theme.text }]}>{item.text}</Text>
+              <View style={styles.actions}>
+                <Pressable onPress={() => acceptCover(item)} style={styles.action}>
+                  <Text style={[styles.takeBack, { color: theme.text }]}>Accept</Text>
+                </Pressable>
+                <Pressable onPress={() => declineCover(item)} style={styles.action}>
+                  <Text style={[styles.actionText, { color: theme.muted }]}>Decline</Text>
+                </Pressable>
+              </View>
+            </>
           ) : (
             <>
-              <Text style={styles.text}>{item.text}</Text>
+              <Text style={[styles.text, { color: theme.text }]}>{item.text}</Text>
               <View style={styles.actions}>
                 <Pressable onPress={() => acceptConflict(item)} style={styles.action}>
-                  <Text style={styles.actionText}>OK, they've got it</Text>
+                  <Text style={[styles.actionText, { color: theme.muted }]}>OK, they've got it</Text>
                 </Pressable>
                 <Pressable onPress={() => takeBack(item)} style={styles.action}>
-                  <Text style={styles.takeBack}>Take it back</Text>
+                  <Text style={[styles.takeBack, { color: theme.text }]}>Take it back</Text>
                 </Pressable>
               </View>
             </>
@@ -109,6 +124,7 @@ function observe(origin: unknown) {
     settleClaims();
   }
   snapshot = caregiverSnapshot();
+  syncCoverNotices();
 }
 
 function rememberClaim(id: string, offline: boolean) {
@@ -163,6 +179,36 @@ function settleClaims() {
     }
   }
   if (changed) void persistClaims();
+}
+
+function acceptCover(item: Notice) {
+  const store = useScheduleStore.getState();
+  if (!store.deviceCaregiverId) return;
+  store.updateEventFields(item.eventId, { caregiverId: store.deviceCaregiverId, coverRequestedBy: '' });
+}
+
+function declineCover(item: Notice) {
+  useScheduleStore.getState().updateEventField(item.eventId, 'coverRequestedBy', '');
+}
+
+function syncCoverNotices() {
+  const state = useScheduleStore.getState();
+  const me = state.deviceCaregiverId;
+  const covers: Notice[] = [];
+  for (const event of state.events) {
+    if (event.deleted || event.cancelled || !event.coverRequestedBy || event.coverRequestedBy === me) continue;
+    const name = state.caregivers.find((person) => person.id === event.coverRequestedBy)?.name || 'Someone';
+    covers.push({
+      key: `cover:${event.id}`,
+      kind: 'cover',
+      eventId: event.id,
+      text: `${name} asked you to cover ${event.title || 'an event'}`,
+    });
+  }
+  useNotices.setState((current) => {
+    const rest = current.items.filter((item) => item.kind !== 'cover');
+    return { items: [...covers, ...rest].slice(0, 4) };
+  });
 }
 
 function acceptConflict(item: Notice) {
