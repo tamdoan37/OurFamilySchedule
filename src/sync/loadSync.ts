@@ -7,6 +7,7 @@ type SyncEngine = {
   joinFamily: (raw: string) => Promise<void>;
   leaveFamily: () => Promise<void>;
   currentPairingCode: () => Promise<string | null>;
+  syncNow: () => void;
 };
 
 export function syncSupported(): boolean {

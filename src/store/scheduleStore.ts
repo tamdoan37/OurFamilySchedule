@@ -6,6 +6,8 @@ import * as SQLite from 'expo-sqlite';
 import { AppEvent, Caregiver, Child, EventField } from '../types';
 import { emitLocalClaim, emitLocalUpdate } from '../sync/bridge';
 import { loadSyncEngine } from '../sync/loadSync';
+import { emitClaimAttempt, emitScheduleObserved } from '../notifications/bridge';
+import { clampLead } from '../notifications/planReminders';
 
 interface ScheduleState {
   ready: boolean;
@@ -20,6 +22,7 @@ interface ScheduleState {
   syncWaiting: number;
   syncError: string;
   unsyncedClaimIds: string[];
+  reminderLeads: [number, number];
   ydoc: Y.Doc;
   hydrate: () => Promise<void>;
   retryHydrate: () => Promise<void>;
@@ -33,6 +36,7 @@ interface ScheduleState {
   unclaimEvent: (id: string) => void;
   deleteEvent: (id: string) => void;
   loadDemoData: () => void;
+  setReminderLeads: (first: number, second: number) => void;
 }
 
 type NewEvent = {
@@ -109,6 +113,19 @@ function getDatabase() {
           payload BLOB NOT NULL,
           received_at INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (group_id, part_index)
+        );
+        CREATE TABLE IF NOT EXISTS device_meta (
+          id INTEGER PRIMARY KEY NOT NULL,
+          install_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS reminder_settings (
+          id INTEGER PRIMARY KEY NOT NULL,
+          first_minutes INTEGER NOT NULL,
+          second_minutes INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS notice_state (
+          id INTEGER PRIMARY KEY NOT NULL,
+          claims TEXT NOT NULL
         );
       `);
       await addColumn(db, 'ALTER TABLE sync_state ADD COLUMN last_snapshot_at INTEGER NOT NULL DEFAULT 0');
@@ -229,6 +246,9 @@ async function loadPersistedState() {
     const sync = loadSyncEngine();
     if (generation !== loadGeneration) return;
     if (sync) await sync.prepareSync();
+    const reminderRow = await db.getFirstAsync<{ first_minutes: number; second_minutes: number }>(
+      'SELECT first_minutes, second_minutes FROM reminder_settings WHERE id = 1',
+    );
     useScheduleStore.setState({
       ready: true,
       loadError: '',
@@ -237,6 +257,9 @@ async function loadPersistedState() {
       events: readEvents(),
       caregivers: readCaregivers(),
       children: readChildren(),
+      reminderLeads: reminderRow
+        ? [clampLead(reminderRow.first_minutes), clampLead(reminderRow.second_minutes)]
+        : [120, 15],
     });
   } catch (error) {
     if (generation !== loadGeneration) return;
@@ -360,6 +383,7 @@ function writeEvent(input: NewEvent & { id: string }) {
 
 function onDocUpdate(update: Uint8Array, origin: unknown) {
   publish();
+  emitScheduleObserved(origin);
   if (origin !== 'load') schedulePersist();
   if (origin !== 'load' && origin !== 'remote') emitLocalUpdate(update);
 }
@@ -379,6 +403,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   syncWaiting: 0,
   syncError: '',
   unsyncedClaimIds: [],
+  reminderLeads: [120, 15],
   ydoc: ydoc(),
   hydrate: () => {
     if (!hydratePromise) hydratePromise = loadPersistedState();
@@ -448,6 +473,8 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   claimEvent: (id) => {
     const caregiverId = get().deviceCaregiverId;
     if (!caregiverId) return;
+    const offline = get().paired && (get().syncStatus === 'offline' || get().syncWaiting > 0);
+    emitClaimAttempt(id, offline);
     get().updateEventField(id, 'caregiverId', caregiverId);
   },
   unclaimEvent: (id) => {
@@ -456,6 +483,16 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   deleteEvent: (id) => {
     get().updateEventField(id, 'deleted', true);
     set({ demoEventIds: get().demoEventIds.filter((demoId) => demoId !== id) });
+  },
+  setReminderLeads: (first, second) => {
+    const reminderLeads: [number, number] = [clampLead(first), clampLead(second)];
+    set({ reminderLeads });
+    if (!database) return;
+    database.runSync(
+      'INSERT OR REPLACE INTO reminder_settings (id, first_minutes, second_minutes) VALUES (1, ?, ?)',
+      reminderLeads[0],
+      reminderLeads[1],
+    );
   },
   loadDemoData: () => {
     const { caregivers, children, deviceCaregiverId } = get();

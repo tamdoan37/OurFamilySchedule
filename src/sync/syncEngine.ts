@@ -5,6 +5,9 @@ import { encryptDelta, decryptDelta } from '../utils/crypto';
 import { applyRemoteUpdate, encodeSnapshot, getScheduleDatabase, useScheduleStore } from '../store/scheduleStore';
 import { setLocalClaimHandler, setLocalUpdateHandler } from './bridge';
 import { encodeParts, joinParts, readPart } from './frame';
+import { emitClaimDeliveryFailed } from '../notifications/bridge';
+import { getInstallId } from '../notifications/device';
+import { registerPushDevice } from '../notifications/push';
 import {
   bytesToBase64,
   clearPairing,
@@ -118,6 +121,7 @@ async function onForeground() {
   await catchUp();
   if (await snapshotDue()) await queueSnapshot();
   await flush();
+  await registerThisDevice();
 }
 
 async function connect() {
@@ -153,6 +157,7 @@ async function connect() {
     await catchUp();
     if (await snapshotDue()) await queueSnapshot();
     await flush();
+    await registerThisDevice();
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Could not sync');
     setStatus('offline', 'Sync failed');
@@ -379,6 +384,7 @@ async function flush() {
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Could not send sync');
+    for (const id of useScheduleStore.getState().unsyncedClaimIds) emitClaimDeliveryFailed(id);
     setStatus('offline', 'Sync failed');
   }
 }
@@ -397,6 +403,7 @@ async function push(row: { ciphertext: string; iv: string; tag: string; snapshot
     headers: {
       Authorization: `Bearer ${session.token}`,
       'Content-Type': 'application/json',
+      'X-Device-Id': await getInstallId(),
     },
     body: JSON.stringify(body),
   });
@@ -470,6 +477,24 @@ function waitUntilReady() {
       resolve();
     });
   });
+}
+
+export function syncNow() {
+  if (!session) return;
+  void serial(async () => {
+    await catchUp();
+    await flush();
+    await registerThisDevice();
+  });
+}
+
+async function registerThisDevice() {
+  if (!session) return;
+  try {
+    await registerPushDevice(session);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : 'Could not register for notifications');
+  }
 }
 
 function setStatus(syncStatus: 'synced' | 'syncing' | 'offline', syncError = '') {

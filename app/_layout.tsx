@@ -5,6 +5,8 @@ import { Stack, usePathname, useRouter } from 'expo-router';
 import { useScheduleStore } from '../src/store/scheduleStore';
 import SyncStatus from '../src/components/SyncStatus';
 import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
+import { ScheduleNotices, startNotices } from '../src/notifications/notices';
+import { startNotificationNavigation, startReminders } from '../src/notifications/reminders';
 
 export default function RootLayout() {
   const hydrate = useScheduleStore((state) => state.hydrate);
@@ -20,6 +22,26 @@ export default function RootLayout() {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  useEffect(() => {
+    if (!ready) return;
+    return startNotices();
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    return startReminders();
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    return startNotificationNavigation({
+      openEvent: (eventId) => router.push(`/event/${eventId}`),
+      onWake: () => {
+        if (syncSupported()) loadSyncEngine()?.syncNow();
+      },
+    });
+  }, [ready, router]);
 
   useEffect(() => {
     if (ready && syncSupported()) loadSyncEngine()?.startSync();
@@ -44,8 +66,9 @@ export default function RootLayout() {
         <Stack.Screen name="capture" options={{ title: 'Scan Schedule' }} />
         <Stack.Screen name="timeline" options={{ title: 'Timeline' }} />
         <Stack.Screen name="event/[id]" options={{ title: 'Edit event' }} />
-        <Stack.Screen name="settings" options={{ title: 'Pairing' }} />
+        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       </Stack>
+      <ScheduleNotices onOpenEvent={(eventId) => router.push(`/event/${eventId}`)} />
       {!ready && (
         <View style={styles.loading}>
           <Text style={styles.loadingText}>{loadError || 'Loading…'}</Text>

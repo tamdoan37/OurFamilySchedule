@@ -32,7 +32,7 @@ export default function HomeScreen() {
         <Button title="View Timeline" />
       </Link>
       <Link href="/settings" asChild>
-        <Button title="Pairing" />
+        <Button title="Settings" />
       </Link>
     </View>
   );

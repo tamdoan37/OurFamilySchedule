@@ -45,6 +45,13 @@ db.exec(`
     ip TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS push_devices (
+    room_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    push_token TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (room_id, device_id)
+  );
 `);
 
 const buckets = new Map();
@@ -121,6 +128,7 @@ function bearer(header) {
 function cleanup() {
   const cutoff = Date.now() - THIRTY_DAYS;
   db.prepare('DELETE FROM messages WHERE created_at < ?').run(cutoff);
+  db.prepare('DELETE FROM push_devices WHERE updated_at < ?').run(cutoff);
   const rooms = db.prepare('SELECT id FROM rooms').all();
   for (const room of rooms) {
     const row = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE room_id = ?').get(room.id);
@@ -143,7 +151,7 @@ app.use((req, res, next) => {
     res.status(403).json({ error: 'origin' });
     return;
   }
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Device-Id');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') {
     res.sendStatus(204);
@@ -157,7 +165,38 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/rooms/:roomId/messages', (req, res) => {
+app.post('/rooms/:roomId/devices', (req, res) => {
+  const roomId = req.params.roomId;
+  const token = bearer(req.headers.authorization);
+  const access = authorize(roomId, token, clientIp(req));
+  if (access === 'limited') {
+    res.status(429).json({ error: 'limited' });
+    return;
+  }
+  if (access !== 'ok') {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+  if (limited(roomId)) {
+    res.status(429).json({ error: 'limited' });
+    return;
+  }
+  const { deviceId, pushToken } = req.body || {};
+  if (typeof deviceId !== 'string' || !/^[A-Za-z0-9-]{8,80}$/.test(deviceId)) {
+    res.status(400).json({ error: 'bad device' });
+    return;
+  }
+  if (!isExpoToken(pushToken)) {
+    res.status(400).json({ error: 'bad token' });
+    return;
+  }
+  db.prepare(
+    'INSERT OR REPLACE INTO push_devices (room_id, device_id, push_token, updated_at) VALUES (?, ?, ?, ?)',
+  ).run(roomId, deviceId, pushToken, Date.now());
+  res.json({ ok: true });
+});
+
+app.post('/rooms/:roomId/messages', async (req, res) => {
   const roomId = req.params.roomId;
   const token = bearer(req.headers.authorization);
   const access = authorize(roomId, token, clientIp(req));
@@ -192,6 +231,12 @@ app.post('/rooms/:roomId/messages', (req, res) => {
     db.prepare('DELETE FROM messages WHERE room_id = ? AND seq <= ?').run(roomId, covered);
   }
   io.to(roomId).emit('relay-message', { seq, ciphertext, iv, tag });
+  const sender = typeof req.headers['x-device-id'] === 'string' ? req.headers['x-device-id'] : '';
+  try {
+    await notifyOthers(roomId, sender);
+  } catch {
+    console.error('Could not send a wake-up push');
+  }
   res.json({ seq });
 });
 
@@ -218,6 +263,36 @@ app.get('/rooms/:roomId/messages', (req, res) => {
   ).all(roomId, cursor, PAGE);
   res.json({ messages });
 });
+
+function isExpoToken(token) {
+  return typeof token === 'string'
+    && token.length <= 200
+    && (token.startsWith('ExponentPushToken[') || token.startsWith('ExpoPushToken['))
+    && token.endsWith(']');
+}
+
+async function notifyOthers(roomId, sender) {
+  const rows = db.prepare(
+    'SELECT device_id, push_token FROM push_devices WHERE room_id = ?',
+  ).all(roomId);
+  const messages = rows
+    .filter((row) => row.device_id !== sender && isExpoToken(row.push_token))
+    .map((row) => ({
+      to: row.push_token,
+      title: 'OurFamilySchedule',
+      body: 'Your family schedule was updated',
+      sound: 'default',
+      data: { kind: 'sync' },
+    }));
+  if (messages.length === 0) return;
+  const response = await fetch(process.env.EXPO_PUSH_URL || 'https://exp.host/--/api/v2/push/send', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(messages),
+    signal: AbortSignal.timeout(4000),
+  });
+  if (!response.ok) console.error('Could not send a wake-up push');
+}
 
 const server = http.createServer(app);
 const io = new Server(server, {

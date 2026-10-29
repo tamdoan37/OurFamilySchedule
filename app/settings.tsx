@@ -96,10 +96,11 @@ export default function SettingsScreen() {
 
   if (!syncSupported()) {
     return (
-      <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Pairing</Text>
         <Text style={styles.note}>Sync needs a development build</Text>
-      </View>
+        <ReminderChoices />
+      </ScrollView>
     );
   }
 
@@ -161,9 +162,58 @@ export default function SettingsScreen() {
           <Button title="Hide code" onPress={() => setCode(null)} />
         </>
       )}
+      <ReminderChoices />
     </ScrollView>
   );
 }
+
+function ReminderChoices() {
+  const leads = useScheduleStore((state) => state.reminderLeads);
+  const setReminderLeads = useScheduleStore((state) => state.setReminderLeads);
+  return (
+    <>
+      <Text style={styles.title}>Reminders</Text>
+      <Text style={styles.note}>On duty, this phone is reminded before the event. The backup gets one quiet reminder, 2 hours before.</Text>
+      <LeadRow
+        label="First reminder"
+        selected={leads[0]}
+        onPick={(minutes) => setReminderLeads(minutes, leads[1])}
+      />
+      <LeadRow
+        label="Second reminder"
+        selected={leads[1]}
+        onPick={(minutes) => setReminderLeads(leads[0], minutes)}
+      />
+    </>
+  );
+}
+
+function LeadRow({ label, selected, onPick }: { label: string; selected: number; onPick: (minutes: number) => void }) {
+  return (
+    <View>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.choices}>
+        {LEAD_OPTIONS.map((option) => (
+          <Pressable
+            key={option.minutes}
+            onPress={() => onPick(option.minutes)}
+            style={[styles.choice, selected === option.minutes && styles.choiceOn]}
+          >
+            <Text style={selected === option.minutes ? styles.choiceOnText : styles.choiceText}>{option.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const LEAD_OPTIONS = [
+  { minutes: 15, label: '15 min' },
+  { minutes: 30, label: '30 min' },
+  { minutes: 60, label: '1 hour' },
+  { minutes: 120, label: '2 hours' },
+  { minutes: 1440, label: '1 day' },
+];
 
 function PairingCode({ value }: { value: string }) {
   const qr = QRCode.create(value, { errorCorrectionLevel: 'M' });
@@ -195,4 +245,9 @@ const styles = StyleSheet.create({
   cameraActions: { padding: 16, backgroundColor: 'rgba(0,0,0,0.35)' },
   qr: { backgroundColor: '#fff', padding: 16, alignSelf: 'center' },
   qrRow: { flexDirection: 'row' },
+  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  choice: { borderWidth: 1, borderColor: '#ccc', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
+  choiceOn: { borderColor: '#111', backgroundColor: '#111' },
+  choiceText: { fontSize: 14, color: '#333' },
+  choiceOnText: { fontSize: 14, color: '#fff' },
 });
