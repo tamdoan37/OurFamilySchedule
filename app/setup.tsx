@@ -12,8 +12,8 @@ import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
 import { useTheme } from '../src/theme';
 
 const COLORS = [
-  { name: 'Red', value: '#FF6B6B' },
-  { name: 'Teal', value: '#4ECDC4' },
+  { name: 'Red', value: '#C2412F' },
+  { name: 'Teal', value: '#0F7C78' },
   { name: 'Moss', value: '#2F5D4A' },
   { name: 'Gold', value: '#8A5A12' },
 ];
@@ -78,7 +78,7 @@ export default function SetupScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Family setup</Text>
       <Text style={styles.sub}>Add the people who share this calendar. This phone's person stays on this phone.</Text>
-      <Button title="Join an existing family" onPress={() => router.push('/settings')} />
+      <Button title="Join an existing family" onPress={() => router.push('/pair')} />
 
       <Text style={styles.heading}>Caregivers</Text>
       <TextInput value={caregiverName} onChangeText={setCaregiverName} placeholder="Name" style={styles.input} />

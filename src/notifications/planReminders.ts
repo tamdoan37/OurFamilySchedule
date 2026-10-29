@@ -1,3 +1,5 @@
+import { WHOLE_FAMILY_ID } from '../types';
+
 const HORIZON_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_REMINDERS = 60;
 const BACKUP_LEAD_MINUTES = 120;
@@ -53,7 +55,7 @@ export function planReminders(input: {
     if (event.deleted || event.timeTbd || event.cancelled) continue;
     const start = Date.parse(event.startTime);
     if (!Number.isFinite(start) || start <= input.now || start > horizon) continue;
-    const onDuty = event.caregiverId === me;
+    const onDuty = event.caregiverId === me || event.caregiverId === WHOLE_FAMILY_ID;
     const backup = !onDuty && event.backupCaregiverId === me;
     if (!onDuty && !backup) continue;
     const slots = onDuty ? leads.map((leadMinutes) => ({ leadMinutes, quiet: false })) : [{ leadMinutes: BACKUP_LEAD_MINUTES, quiet: true }];

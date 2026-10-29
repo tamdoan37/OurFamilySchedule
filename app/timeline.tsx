@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Modal, PanResponder, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { toOffsetISO, useScheduleStore } from '../src/store/scheduleStore';
-import { AppEvent, Caregiver } from '../src/types';
+import { AppEvent, Caregiver, WHOLE_FAMILY_ID } from '../src/types';
 import { EventDraftFields, EventFields } from '../src/components/EventFields';
 import { PillButton } from '../src/components/PillButton';
+import { TabBar } from '../src/components/TabBar';
 import { parseQuickAdd } from '../src/parser/quickAdd';
 import { draftProblems } from '../src/parser/reviewDrafts';
-import { tintColor, useTheme } from '../src/theme';
+import { useTypeface } from '../src/fonts';
+import { caregiverLook, ridePill, rideText, useTheme } from '../src/theme';
 
 type Filter = { kind: 'all' | 'mine' | 'unassigned' | 'child'; childId: string };
 type MenuMode = 'actions' | 'reassign' | 'backup' | 'cover';
@@ -19,13 +22,16 @@ const WEEK_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 export default function TimelineScreen() {
   const router = useRouter();
   const theme = useTheme();
+  const type = useTypeface();
+  const insets = useSafeAreaInsets();
   const events = useScheduleStore((state) => state.events);
   const caregivers = useScheduleStore((state) => state.caregivers);
   const children = useScheduleStore((state) => state.children);
   const demoEventIds = useScheduleStore((state) => state.demoEventIds);
   const deviceCaregiverId = useScheduleStore((state) => state.deviceCaregiverId);
+  const paired = useScheduleStore((state) => state.paired);
+  const syncStatus = useScheduleStore((state) => state.syncStatus);
   const claimEvent = useScheduleStore((state) => state.claimEvent);
-  const unclaimEvent = useScheduleStore((state) => state.unclaimEvent);
   const updateEventField = useScheduleStore((state) => state.updateEventField);
   const updateEventFields = useScheduleStore((state) => state.updateEventFields);
   const addEvent = useScheduleStore((state) => state.addEvent);
@@ -37,6 +43,7 @@ export default function TimelineScreen() {
   const [dayMenuKey, setDayMenuKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ eventId: string; previousId: string; name: string } | null>(null);
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [selectedKey, setSelectedKey] = useState(() => dayKey(new Date()));
   const [now, setNow] = useState(() => new Date());
   const [addOpen, setAddOpen] = useState(false);
   const [addMode, setAddMode] = useState<AddMode>('choose');
@@ -71,15 +78,20 @@ export default function TimelineScreen() {
     return true;
   });
   const showingDemo = shown.some((event) => demoEventIds.includes(event.id));
-  const twoLanes = caregivers.length === 2;
-  const left = twoLanes ? caregivers[0] : undefined;
-  const right = twoLanes ? caregivers[1] : undefined;
+  const left = caregivers.length >= 2 ? caregivers[0] : undefined;
+  const right = caregivers.length >= 2 ? caregivers[1] : undefined;
   const menuEvent = sorted.find((event) => event.id === menuId) ?? null;
   const days = buildDays(shown, weekStart, caregivers, now);
   const nowMs = now.getTime();
   const nextId = sorted.find((event) => !event.cancelled && !event.timeTbd && Date.parse(event.startTime) > nowMs)?.id ?? '';
   const others = caregivers.filter((person) => person.id !== deviceCaregiverId);
   const preview = parseQuickAdd(quickText, children, now);
+  const needsCount = sorted.filter((event) => {
+    const time = Date.parse(event.startTime);
+    return !event.caregiverId && !event.cancelled && time >= weekStartMs && time < weekEndMs;
+  }).length;
+  const onThisWeek = dayKey(weekStart) === dayKey(startOfWeek(now));
+  const syncLabel = !paired ? '' : syncStatus === 'offline' ? 'Offline' : syncStatus === 'syncing' ? 'Syncing' : 'Synced';
 
   function openMenu(id: string) {
     setMenuMode('actions');
@@ -93,7 +105,9 @@ export default function TimelineScreen() {
 
   function announce(eventId: string, previousId: string, nextId: string) {
     if (previousId === nextId) return;
-    const name = caregivers.find((person) => person.id === nextId)?.name ?? 'Unassigned';
+    const name = nextId === WHOLE_FAMILY_ID
+      ? 'the whole family'
+      : caregivers.find((person) => person.id === nextId)?.name ?? 'Needs a ride';
     setNotice({ eventId, previousId, name });
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setNotice(null), 4000);
@@ -126,6 +140,7 @@ export default function TimelineScreen() {
   }
 
   function scrollToDay(key: string) {
+    setSelectedKey(key);
     requestAnimationFrame(() => {
       const y = offsets.current[key];
       if (y == null) return;
@@ -195,41 +210,48 @@ export default function TimelineScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
-      <View style={styles.pastButton}>
-        <PillButton
-          compact
-          variant="secondary"
-          title={showPast ? 'Hide past events' : 'Show past events'}
-          onPress={() => setShowPast((current) => !current)}
-        />
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterBar} contentContainerStyle={styles.filters}>
-        <Chip label="All" on={filter.kind === 'all'} onPress={() => setFilter({ kind: 'all', childId: '' })} />
-        <Chip label="Mine" on={filter.kind === 'mine'} onPress={() => setFilter({ kind: 'mine', childId: '' })} />
-        <Chip label="Unassigned" on={filter.kind === 'unassigned'} onPress={() => setFilter({ kind: 'unassigned', childId: '' })} />
-        {children.map((child) => (
-          <Chip
-            key={child.id}
-            label={child.name}
-            color={child.color}
-            on={filter.kind === 'child' && filter.childId === child.id}
-            onPress={() => setFilter({ kind: 'child', childId: child.id })}
-          />
-        ))}
-      </ScrollView>
-      <View {...pan.panHandlers} style={styles.weekWrap}>
-        <Text style={[styles.weekLabel, { color: theme.muted }]}>{weekLabel(weekStart)}</Text>
-        <View style={styles.weekRow}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.headerTop}>
+          <Text style={[styles.dateLine, { color: theme.muted, fontFamily: type.semibold }]}>
+            {onThisWeek
+              ? now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+              : weekLabel(weekStart)}
+          </Text>
+          <View style={styles.headerActions}>
+            {!!syncLabel && (
+              <View style={[styles.syncPill, { backgroundColor: theme.card }]}>
+                <View style={[styles.syncDot, { backgroundColor: syncStatus === 'offline' ? theme.amber : theme.synced }]} />
+                <Text style={{ color: syncStatus === 'offline' ? rideText : theme.synced, fontSize: 12, fontWeight: '600', fontFamily: type.semibold }}>{syncLabel}</Text>
+              </View>
+            )}
+            <Pressable
+              accessibilityLabel="Settings"
+              onPress={() => router.push('/settings')}
+              style={[styles.gear, { backgroundColor: theme.card }]}
+            >
+              <Text style={{ color: theme.text, fontSize: 18 }}>⚙</Text>
+            </Pressable>
+          </View>
+        </View>
+        <Text style={[styles.weekTitle, { color: theme.text, fontFamily: type.extra }]}>This week</Text>
+        <View {...pan.panHandlers} style={styles.weekRow}>
           {Array.from({ length: 7 }, (_, index) => {
             const date = addDays(weekStart, index);
             const key = dayKey(date);
             const isToday = key === dayKey(now);
+            const selected = key === selectedKey;
             const dots = dotsForDay(shown.filter((event) => dayKey(new Date(event.startTime)) === key), caregivers);
+            const tileBg = selected ? theme.primary : theme.card;
+            const tileColor = selected ? theme.onPrimary : theme.text;
             return (
-              <Pressable key={key} onPress={() => scrollToDay(key)} style={styles.weekDay}>
-                <Text style={[styles.weekLetter, { color: theme.muted }]}>{WEEK_LETTERS[index]}</Text>
-                <View style={[styles.weekCircle, { borderColor: theme.border, backgroundColor: isToday ? theme.primary : 'transparent' }]}>
-                  <Text style={{ color: isToday ? theme.onPrimary : theme.text, fontWeight: '700' }}>{date.getDate()}</Text>
+              <Pressable key={key} onPress={() => scrollToDay(key)} style={styles.weekDay} accessibilityLabel={`${date.toLocaleDateString(undefined, { weekday: 'long' })} ${date.getDate()}`}>
+                <View style={[
+                  styles.weekTile,
+                  { backgroundColor: tileBg },
+                  !selected && isToday && { borderWidth: 2, borderColor: theme.primary },
+                ]}>
+                  <Text style={{ fontSize: 11, fontWeight: '600', fontFamily: type.semibold, color: selected ? '#C9D1D9' : theme.muted }}>{WEEK_LETTERS[index]}</Text>
+                  <Text style={{ fontSize: 17, fontWeight: '700', fontFamily: type.bold, color: tileColor }}>{date.getDate()}</Text>
                 </View>
                 <View style={styles.dots}>
                   {dots.map((color, dotIndex) => <View key={`${color}-${dotIndex}`} style={[styles.dot, { backgroundColor: color }]} />)}
@@ -238,16 +260,24 @@ export default function TimelineScreen() {
             );
           })}
         </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
+          <Chip label="All" on={filter.kind === 'all'} onPress={() => setFilter({ kind: 'all', childId: '' })} filled />
+          <Chip label="Mine" on={filter.kind === 'mine'} onPress={() => setFilter({ kind: 'mine', childId: '' })} />
+          <Chip label="Needs a ride" count={needsCount} on={filter.kind === 'unassigned'} onPress={() => setFilter({ kind: 'unassigned', childId: '' })} />
+          {children.map((child) => (
+            <Chip
+              key={child.id}
+              label={child.name}
+              color={child.color}
+              on={filter.kind === 'child' && filter.childId === child.id}
+              onPress={() => setFilter({ kind: 'child', childId: child.id })}
+            />
+          ))}
+          <Chip label={showPast ? 'Hide past' : 'Past'} on={showPast} onPress={() => setShowPast((current) => !current)} />
+        </ScrollView>
       </View>
-      <ScrollView ref={listRef} style={styles.list} contentContainerStyle={styles.listContent}>
-        <Text style={[styles.title, { color: theme.text }]}>Family Timeline</Text>
-        {showingDemo && <Text style={styles.demo}>DEMO DATA</Text>}
-        {twoLanes && left && right && (
-          <View style={styles.legend}>
-            <Text style={{ color: left.color, fontWeight: '700' }}>{left.name}</Text>
-            <Text style={{ color: right.color, fontWeight: '700' }}>{right.name}</Text>
-          </View>
-        )}
+      <ScrollView ref={listRef} style={styles.list} contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 168 }]}>
+        {showingDemo && <Text style={[styles.demo, { fontFamily: type.bold }]}>DEMO DATA</Text>}
         {days.map((day) => (
           <View
             key={day.key}
@@ -255,64 +285,68 @@ export default function TimelineScreen() {
             onLayout={(event) => { offsets.current[day.key] = event.nativeEvent.layout.y; }}
           >
             <Pressable onLongPress={() => setDayMenuKey(day.key)} delayLongPress={350}>
-              <Text style={[styles.dayHeading, { color: theme.text }]}>{day.name}</Text>
-              <Text style={[styles.daySummary, { color: theme.muted }]}>{day.summary}</Text>
+              <Text style={[styles.dayHeading, { color: theme.text, fontFamily: type.extra }]}>{day.name}</Text>
+              <Text style={[styles.daySummary, { color: theme.muted, fontFamily: type.medium }]}>{day.summary}</Text>
             </Pressable>
-            <View style={styles.dayBody}>
-              {twoLanes && <View style={[styles.centerLine, { backgroundColor: theme.border }]} pointerEvents="none" />}
-              {day.events.length > 0 && renderItems(day.events, day.key === dayKey(now), nowMs).map((item, index) => {
-                if (item.kind === 'now') {
-                  return (
-                    <View key="now" style={styles.nowRow}>
-                      <Text style={[styles.nowLabel, { color: theme.now }]}>Now</Text>
-                      <View style={[styles.nowLine, { backgroundColor: theme.now }]} />
-                    </View>
-                  );
-                }
-                if (item.kind === 'gap') {
-                  return (
-                    <View key={`gap-${index}`} style={styles.gapRow}>
-                      <View style={[styles.gapLine, { backgroundColor: theme.border }]} />
-                      <Text style={[styles.gapText, { color: theme.muted }]}>{item.label}</Text>
-                      <View style={[styles.gapLine, { backgroundColor: theme.border }]} />
-                    </View>
-                  );
-                }
+            {renderItems(day.events, day.key === dayKey(now), nowMs).map((item, index) => {
+              if (item.kind === 'now') {
                 return (
-                  <View key={item.events[0].id} style={item.events.length > 1 ? styles.overlap : undefined}>
-                    {item.events.map((event) => (
-                      <EventCard
-                        key={event.id}
-                        event={event}
-                        caregivers={caregivers}
-                        children={children}
-                        deviceCaregiverId={deviceCaregiverId}
-                        laneCount={caregivers.length}
-                        left={left}
-                        right={right}
-                        clash={sameCaregiverClash(event, sorted)}
-                        waiting={unsyncedClaimIds.includes(event.id)}
-                        soon={event.id === nextId ? relativeStart(Date.parse(event.startTime), nowMs) : ''}
-                        onEdit={() => router.push(`/event/${event.id}`)}
-                        onMenu={() => openMenu(event.id)}
-                        onClaim={() => claimEvent(event.id)}
-                        onUnclaim={() => unclaimEvent(event.id)}
-                        onAssign={(caregiverId) => {
-                          announce(event.id, event.caregiverId, caregiverId);
-                          updateEventField(event.id, 'caregiverId', caregiverId);
-                        }}
-                      />
-                    ))}
+                  <View key="now" style={styles.nowRow}>
+                    <Text style={[styles.nowLabel, { color: theme.now, fontFamily: type.extra }]}>NOW {clockShort(now)}</Text>
+                    <View style={[styles.nowLine, { backgroundColor: theme.now }]} />
+                    <View style={[styles.nowDot, { backgroundColor: theme.now }]} />
                   </View>
                 );
-              })}
-            </View>
+              }
+              if (item.kind === 'gap') {
+                return (
+                  <View key={`gap-${index}`} style={styles.gapWrap}>
+                    <View style={[styles.gapPill, { backgroundColor: theme.card, borderColor: theme.line }]}>
+                      <Text style={{ color: theme.meta, fontSize: 12, fontWeight: '600', fontFamily: type.semibold }}>{item.label}</Text>
+                    </View>
+                  </View>
+                );
+              }
+              return (
+                <View key={item.events.map((event) => event.id).join('-')} style={styles.segment}>
+                  {item.events.length > 1 && (
+                    <View style={[styles.gapPill, { backgroundColor: theme.card, borderColor: theme.line, alignSelf: 'center' }]}>
+                      <Text style={{ color: theme.meta, fontSize: 12, fontWeight: '600', fontFamily: type.semibold }}>{item.events.length} at once</Text>
+                    </View>
+                  )}
+                  {item.events.map((event) => (
+                    <EventCard
+                      key={event.id}
+                      event={event}
+                      caregivers={caregivers}
+                      children={children}
+                      left={left}
+                      right={right}
+                      waiting={unsyncedClaimIds.includes(event.id)}
+                      soon={event.id === nextId ? relativeStart(Date.parse(event.startTime), nowMs) : ''}
+                      onEdit={() => router.push(`/event/${event.id}`)}
+                      onMenu={() => openMenu(event.id)}
+                      onClaim={() => claimEvent(event.id)}
+                      onAssign={(caregiverId) => {
+                        announce(event.id, event.caregiverId, caregiverId);
+                        updateEventField(event.id, 'caregiverId', caregiverId);
+                      }}
+                    />
+                  ))}
+                </View>
+              );
+            })}
           </View>
         ))}
       </ScrollView>
-      <Pressable style={[styles.fab, { backgroundColor: theme.primary }]} onPress={openAdd} accessibilityLabel="Add">
+      <Pressable
+        style={[styles.fab, { backgroundColor: theme.primary, bottom: insets.bottom + 84 }]}
+        onPress={openAdd}
+        accessibilityLabel="Add to the schedule"
+      >
         <Text style={[styles.fabText, { color: theme.onPrimary }]}>+</Text>
       </Pressable>
+      <TabBar />
       <Modal visible={!!menuEvent} transparent animationType="fade" onRequestClose={closeMenu}>
         <View style={styles.backdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} />
@@ -320,48 +354,52 @@ export default function TimelineScreen() {
             {menuMode === 'actions' && menuEvent && (
               <>
                 <Pressable style={styles.sheetRow} onPress={() => { closeMenu(); router.push(`/event/${menuEvent.id}`); }}>
-                  <Text style={[styles.sheetText, { color: theme.text }]}>Edit</Text>
+                  <Text style={[styles.sheetText, { color: theme.text, fontFamily: type.semibold }]}>Edit</Text>
                 </Pressable>
                 {!menuEvent.cancelled && (
                   <>
                     <Pressable style={styles.sheetRow} onPress={() => { shiftEvent(menuEvent, 30 * 60 * 1000); closeMenu(); }}>
-                      <Text style={[styles.sheetText, { color: theme.text }]}>+30 min</Text>
+                      <Text style={[styles.sheetText, { color: theme.text, fontFamily: type.semibold }]}>+30 min</Text>
                     </Pressable>
                     <Pressable style={styles.sheetRow} onPress={() => { shiftEvent(menuEvent, 24 * 60 * 60 * 1000); closeMenu(); }}>
-                      <Text style={[styles.sheetText, { color: theme.text }]}>Move to tomorrow</Text>
+                      <Text style={[styles.sheetText, { color: theme.text, fontFamily: type.semibold }]}>Move to tomorrow</Text>
                     </Pressable>
                     {!!deviceCaregiverId && others.length === 1 && (
                       <Pressable style={styles.sheetRow} onPress={() => { updateEventField(menuEvent.id, 'coverRequestedBy', deviceCaregiverId); closeMenu(); }}>
-                        <Text style={[styles.sheetText, { color: theme.text }]}>Ask {others[0].name} to cover</Text>
+                        <Text style={[styles.sheetText, { color: theme.text, fontFamily: type.semibold }]}>Ask {others[0].name} to cover</Text>
                       </Pressable>
                     )}
                     {!!deviceCaregiverId && others.length > 1 && (
                       <Pressable style={styles.sheetRow} onPress={() => setMenuMode('cover')}>
-                        <Text style={[styles.sheetText, { color: theme.text }]}>Ask someone to cover</Text>
+                        <Text style={[styles.sheetText, { color: theme.text, fontFamily: type.semibold }]}>Ask someone to cover</Text>
                       </Pressable>
                     )}
                     <Pressable style={styles.sheetRow} onPress={() => setMenuMode('reassign')}>
-                      <Text style={[styles.sheetText, { color: theme.text }]}>Reassign</Text>
+                      <Text style={[styles.sheetText, { color: theme.text, fontFamily: type.semibold }]}>Reassign</Text>
                     </Pressable>
                     <Pressable style={styles.sheetRow} onPress={() => setMenuMode('backup')}>
-                      <Text style={[styles.sheetText, { color: theme.text }]}>Set backup</Text>
+                      <Text style={[styles.sheetText, { color: theme.text, fontFamily: type.semibold }]}>Set backup</Text>
                     </Pressable>
                   </>
                 )}
                 <Pressable style={styles.sheetRow} onPress={() => { updateEventField(menuEvent.id, 'cancelled', !menuEvent.cancelled); closeMenu(); }}>
-                  <Text style={[styles.sheetText, { color: theme.danger }]}>{menuEvent.cancelled ? 'Restore' : 'Cancel event'}</Text>
+                  <Text style={[styles.sheetText, { color: theme.danger, fontFamily: type.semibold }]}>{menuEvent.cancelled ? 'Restore' : 'Cancel event'}</Text>
                 </Pressable>
               </>
             )}
             {menuMode === 'cover' && menuEvent && others.map((person) => (
               <Pressable key={person.id} style={styles.sheetRow} onPress={() => { updateEventField(menuEvent.id, 'coverRequestedBy', deviceCaregiverId); closeMenu(); }}>
-                <Text style={[styles.sheetText, { color: person.color }]}>Ask {person.name} to cover</Text>
+                <Text style={[styles.sheetText, { color: caregiverLook(person).color, fontFamily: type.semibold }]}>Ask {person.name} to cover</Text>
               </Pressable>
             ))}
             {menuMode === 'reassign' && menuEvent && (
               <PersonList
                 title="Reassign"
-                people={[{ id: '', name: 'Unassigned', color: theme.muted }, ...caregivers]}
+                people={[
+                  { id: '', name: 'Needs a ride', color: theme.amber },
+                  { id: WHOLE_FAMILY_ID, name: 'Whole family', color: theme.text },
+                  ...caregivers,
+                ]}
                 selected={menuEvent.caregiverId}
                 onPick={(id) => {
                   announce(menuEvent.id, menuEvent.caregiverId, id);
@@ -379,7 +417,7 @@ export default function TimelineScreen() {
               />
             )}
             <Pressable style={styles.sheetRow} onPress={closeMenu}>
-              <Text style={[styles.sheetText, { color: theme.muted }]}>Close</Text>
+              <Text style={[styles.sheetText, { color: theme.muted, fontFamily: type.semibold }]}>Close</Text>
             </Pressable>
           </View>
         </View>
@@ -389,10 +427,10 @@ export default function TimelineScreen() {
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setDayMenuKey(null)} />
           <View style={[styles.sheet, { backgroundColor: theme.sheet }]}>
             <Pressable style={styles.sheetRow} onPress={() => dayMenuKey && cancelDay(dayMenuKey)}>
-              <Text style={[styles.sheetText, { color: theme.danger }]}>Cancel all events this day</Text>
+              <Text style={[styles.sheetText, { color: theme.danger, fontFamily: type.semibold }]}>Cancel all events this day</Text>
             </Pressable>
             <Pressable style={styles.sheetRow} onPress={() => setDayMenuKey(null)}>
-              <Text style={[styles.sheetText, { color: theme.muted }]}>Close</Text>
+              <Text style={[styles.sheetText, { color: theme.muted, fontFamily: type.semibold }]}>Close</Text>
             </Pressable>
           </View>
         </View>
@@ -401,24 +439,25 @@ export default function TimelineScreen() {
         <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeAdd} />
           <View style={[styles.sheet, styles.addSheet, { backgroundColor: theme.sheet }]}>
+            <View style={[styles.handle, { backgroundColor: theme.border }]} />
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.addContent}>
               {addMode === 'choose' && (
                 <>
-                  <Text style={[styles.sheetTitle, { color: theme.text }]}>Add</Text>
+                  <Text style={[styles.sheetTitle, { color: theme.text, fontFamily: type.extra }]}>Add to the schedule</Text>
                   <PillButton title="Quick add" onPress={() => setAddMode('quick')} />
                   <PillButton title="Scan a flyer" variant="secondary" onPress={() => { closeAdd(); router.push('/capture'); }} />
                 </>
               )}
               {addMode === 'quick' && (
                 <>
-                  <Text style={[styles.sheetTitle, { color: theme.text }]}>Quick add</Text>
+                  <Text style={[styles.sheetTitle, { color: theme.text, fontFamily: type.extra }]}>Quick add</Text>
                   <TextInput
                     value={quickText}
                     onChangeText={setQuickText}
                     placeholder="Dentist Thu 3pm Emma"
                     placeholderTextColor={theme.muted}
                     autoFocus
-                    style={[styles.quickInput, { color: theme.text, borderColor: theme.border }]}
+                    style={[styles.quickInput, { color: theme.text, borderColor: theme.primary, fontFamily: type.semibold }]}
                   />
                   <PreviewCard preview={preview} children={children} />
                   <PillButton title="More details" variant="secondary" onPress={openDetails} />
@@ -427,7 +466,7 @@ export default function TimelineScreen() {
               )}
               {addMode === 'details' && draft && (
                 <>
-                  <Text style={[styles.sheetTitle, { color: theme.text }]}>More details</Text>
+                  <Text style={[styles.sheetTitle, { color: theme.text, fontFamily: type.extra }]}>More details</Text>
                   <EventFields value={draft} onChange={setDraft} caregivers={caregivers} children={children} />
                   <PillButton title="Save" onPress={saveDetails} disabled={draftProblems(draft).length > 0} />
                 </>
@@ -438,8 +477,9 @@ export default function TimelineScreen() {
         </KeyboardAvoidingView>
       </Modal>
       {notice && (
-        <Pressable style={[styles.toast, { backgroundColor: theme.primary }]} onPress={undoAssign}>
-          <Text style={[styles.toastText, { color: theme.onPrimary }]}>Given to {notice.name} · Undo</Text>
+        <Pressable style={[styles.toast, { backgroundColor: theme.primary, bottom: insets.bottom + 156 }]} onPress={undoAssign}>
+          <Text style={[styles.toastText, { color: theme.onPrimary, fontFamily: type.semibold }]} numberOfLines={1}>Given to {notice.name}</Text>
+          <View style={styles.undo}><Text style={{ color: theme.onPrimary, fontFamily: type.bold }}>Undo</Text></View>
         </Pressable>
       )}
     </View>
@@ -454,6 +494,7 @@ function PreviewCard({
   children: { id: string; name: string; color: string }[];
 }) {
   const theme = useTheme();
+  const type = useTypeface();
   const names = children.filter((child) => preview.childIds.includes(child.id));
   const when = !preview.start
     ? 'Add a day or time'
@@ -461,14 +502,14 @@ function PreviewCard({
       ? `${preview.start.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · Time TBD`
       : preview.start.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   return (
-    <View style={[styles.preview, { backgroundColor: theme.card }]}>
-      <Text style={[styles.previewTitle, { color: theme.text }]}>{preview.title}</Text>
-      <Text style={{ color: theme.muted }}>🕐 {when}</Text>
+    <View style={[styles.preview, { backgroundColor: theme.bg }]}>
+      <Text style={[styles.previewTitle, { color: theme.text, fontFamily: type.bold }]}>{preview.title}</Text>
+      <Text style={{ color: theme.muted, fontFamily: type.medium }}>{when}</Text>
       {names.length > 0 && (
         <View style={styles.pills}>
           {names.map((child) => (
             <View key={child.id} style={[styles.childPill, { backgroundColor: child.color }]}>
-              <Text style={styles.childPillText}>{child.name}</Text>
+              <Text style={[styles.childPillText, { fontFamily: type.bold }]}>{child.name}</Text>
             </View>
           ))}
         </View>
@@ -481,41 +522,37 @@ function EventCard({
   event,
   caregivers,
   children,
-  deviceCaregiverId,
-  laneCount,
   left,
   right,
-  clash,
   waiting,
   soon,
   onEdit,
   onMenu,
   onClaim,
-  onUnclaim,
   onAssign,
 }: {
   event: AppEvent;
   caregivers: Caregiver[];
   children: { id: string; name: string; color: string }[];
-  deviceCaregiverId: string;
-  laneCount: number;
   left?: Caregiver;
   right?: Caregiver;
-  clash: boolean;
   waiting: boolean;
   soon: string;
   onEdit: () => void;
   onMenu: () => void;
   onClaim: () => void;
-  onUnclaim: () => void;
   onAssign: (caregiverId: string) => void;
 }) {
   const theme = useTheme();
-  const caregiver = caregivers.find((person) => person.id === event.caregiverId);
-  const backup = caregivers.find((person) => person.id === event.backupCaregiverId);
+  const type = useTypeface();
+  const whole = event.caregiverId === WHOLE_FAMILY_ID;
+  const caregiver = whole ? undefined : caregivers.find((person) => person.id === event.caregiverId);
   const kids = children.filter((child) => event.childIds.includes(child.id));
   const unassigned = !event.caregiverId;
-  const mine = !!event.caregiverId && event.caregiverId === deviceCaregiverId;
+  const look = caregiver ? caregiverLook(caregiver) : null;
+  const cardBg = whole ? '#17202A' : unassigned ? theme.amberBg : look ? look.tint : theme.card;
+  const titleColor = whole ? '#FFFFFF' : theme.text;
+  const metaColor = whole ? '#C9D1D9' : theme.meta;
   const card = (
     <Pressable
       onPress={onEdit}
@@ -523,63 +560,85 @@ function EventCard({
       delayLongPress={350}
       style={[
         styles.block,
-        {
-          backgroundColor: caregiver ? tintColor(caregiver.color, theme.bg, 0.12) : theme.amberBg,
-          borderLeftColor: caregiver?.color ?? 'transparent',
-          opacity: event.cancelled ? 0.55 : 1,
-        },
-        unassigned && { borderWidth: 1.5, borderStyle: 'dashed', borderColor: theme.amber, borderLeftWidth: 1.5 },
-        laneCount === 2 && unassigned && styles.centerCard,
-        laneCount === 2 && left && event.caregiverId === left.id && styles.leftCard,
-        laneCount === 2 && right && event.caregiverId === right.id && styles.rightCard,
+        { backgroundColor: cardBg, opacity: event.cancelled ? 0.55 : 1 },
+        unassigned && !whole && { borderWidth: 1.5, borderStyle: 'dashed', borderColor: theme.amber },
+        !unassigned && !whole && styles.shadow,
       ]}
     >
       <View style={styles.cardRow}>
-        {!!event.icon && <Text style={styles.bigIcon}>{event.icon}</Text>}
+        <View style={[styles.iconTile, { backgroundColor: whole ? '#2E3A47' : '#FFFFFF' }]}>
+          {event.icon
+            ? <Text style={styles.iconEmoji}>{event.icon}</Text>
+            : <View style={[styles.iconDot, { backgroundColor: look?.color ?? (whole ? '#FFFFFF' : theme.amber) }]} />}
+        </View>
         <View style={styles.cardBody}>
-          <Text style={[styles.eventTitle, { color: theme.text }, event.cancelled && styles.struck]}>{event.title}</Text>
-          <Text style={[styles.meta, { color: theme.muted }]}>🕐 {timeRange(event.startTime, event.endTime, event.timeTbd)}</Text>
-          {!!event.location && <Text style={[styles.meta, { color: theme.muted }]}>📍 {event.location}</Text>}
-          {!!soon && <Text style={[styles.soon, { color: theme.now }]}>{soon}</Text>}
+          <View style={styles.titleRow}>
+            <Text style={[styles.eventTitle, { color: titleColor, fontFamily: type.bold }, event.cancelled && styles.struck]}>{event.title}</Text>
+            {!!soon && !event.cancelled && (
+              <View style={styles.soonPill}>
+                <Text style={[styles.soonText, { fontFamily: type.bold }]}>{soon}</Text>
+              </View>
+            )}
+          </View>
+          <Text style={[styles.meta, { color: metaColor, fontFamily: type.medium }]}>
+            {timeRange(event.startTime, event.endTime, event.timeTbd)}{event.location ? ` · ${event.location}` : ''}
+          </Text>
           {kids.length > 0 && (
             <View style={styles.pills}>
               {kids.map((child) => (
-                <View key={child.id} style={[styles.childPill, { backgroundColor: child.color }]}>
-                  <Text style={styles.childPillText}>{child.name}</Text>
+                <View key={child.id} style={[styles.childPill, { backgroundColor: whole ? '#FFFFFF' : child.color }]}>
+                  <Text style={[styles.childPillText, { color: whole ? '#17202A' : '#FFFFFF', fontFamily: type.bold }]}>{child.name}</Text>
                 </View>
               ))}
             </View>
           )}
-          {!!event.notes && <Text style={[styles.meta, { color: theme.muted }]}>{event.notes}</Text>}
-          {event.checklist.map((item) => (
-            <Text key={item.id} style={[styles.meta, { color: theme.muted }, item.done && styles.struck]}>{item.done ? '☑' : '☐'} {item.text}</Text>
-          ))}
-          {event.cancelled && <Text style={[styles.cancelledTag, { color: theme.muted }]}>Cancelled</Text>}
-          {unassigned && !event.cancelled && (
-            <View style={[styles.needsPill, { backgroundColor: theme.amber }]}>
-              <Text style={styles.needsText}>Needs someone</Text>
+          {waiting && (
+            <View style={[styles.offlineTag, { borderColor: whole ? '#4A5562' : theme.border }]}>
+              <Text style={{ color: whole ? '#C9D1D9' : theme.muted, fontSize: 11, fontWeight: '700', fontFamily: type.bold }}>They edited this offline</Text>
             </View>
           )}
-          {caregiver && waiting && <Text style={[styles.waiting, { color: theme.muted }]}>{caregiver.name} · waiting to sync</Text>}
-          {backup && <Text style={[styles.meta, { color: theme.muted }]}>Backup: {backup.name}</Text>}
-          {clash && !event.cancelled && <Text style={[styles.clash, { color: theme.danger }]}>Same caregiver, overlapping times</Text>}
-          {unassigned && !event.cancelled && <PillButton compact title="Claim" onPress={onClaim} />}
-          {mine && !event.cancelled && <PillButton compact variant="secondary" title="Unclaim" onPress={onUnclaim} />}
+          {event.cancelled && <Text style={[styles.tag, { color: metaColor, fontFamily: type.bold }]}>Cancelled</Text>}
+          {unassigned && !event.cancelled && (
+            <View style={[styles.needsPill, { backgroundColor: ridePill }]}>
+              <Text style={[styles.needsText, { color: rideText, fontFamily: type.bold }]}>Needs a ride</Text>
+            </View>
+          )}
+          {whole && (
+            <View style={styles.familyPill}>
+              <Text style={[styles.familyText, { fontFamily: type.extra }]}>Whole family</Text>
+            </View>
+          )}
         </View>
-        {caregiver && (
-          <View style={[styles.avatar, { backgroundColor: caregiver.color }]}>
-            <Text style={styles.avatarText}>{initial(caregiver.name)}</Text>
+        {whole ? (
+          <View style={styles.avatarStack}>
+            {caregivers.slice(0, 2).map((person, index) => {
+              const personLook = caregiverLook(person);
+              return (
+                <View key={person.id} style={[styles.avatarSm, { backgroundColor: personLook.color, marginLeft: index === 0 ? 0 : -8 }]}>
+                  <Text style={[styles.avatarText, { fontFamily: type.bold }]}>{initial(person.name)}</Text>
+                </View>
+              );
+            })}
           </View>
-        )}
+        ) : look ? (
+          <View style={[styles.avatar, { backgroundColor: look.color }]}>
+            <Text style={[styles.avatarText, { fontFamily: type.bold }]}>{initial(caregiver?.name ?? '')}</Text>
+          </View>
+        ) : null}
       </View>
+      {unassigned && !event.cancelled && (
+        <Pressable onPress={onClaim} style={[styles.drive, { backgroundColor: theme.primary }]}>
+          <Text style={{ color: theme.onPrimary, fontSize: 14, fontWeight: '700', fontFamily: type.bold }}>I'll drive</Text>
+        </Pressable>
+      )}
     </Pressable>
   );
 
-  if (!left || !right) return card;
+  if (!left || !right || whole) return card;
   return (
     <Swipeable
-      renderLeftActions={() => <LaneAction name={right.name} color={right.color} />}
-      renderRightActions={() => <LaneAction name={left.name} color={left.color} />}
+      renderLeftActions={() => <LaneAction name={right.name} color={caregiverLook(right).color} />}
+      renderRightActions={() => <LaneAction name={left.name} color={caregiverLook(left).color} />}
       onSwipeableOpen={(direction, swipeable) => {
         const target = direction === 'right' ? left.id : right.id;
         if (target !== event.caregiverId) onAssign(target);
@@ -592,18 +651,45 @@ function EventCard({
 }
 
 function LaneAction({ name, color }: { name: string; color: string }) {
+  const type = useTypeface();
   return (
     <View style={[styles.laneAction, { backgroundColor: color }]}>
-      <Text style={styles.laneActionText}>{name}</Text>
+      <Text style={[styles.laneActionText, { fontFamily: type.bold }]}>{name}</Text>
     </View>
   );
 }
 
-function Chip({ label, on, onPress, color }: { label: string; on: boolean; onPress: () => void; color?: string }) {
+function Chip({
+  label,
+  on,
+  onPress,
+  color,
+  count,
+}: {
+  label: string;
+  on: boolean;
+  onPress: () => void;
+  color?: string;
+  count?: number;
+  filled?: boolean;
+}) {
   const theme = useTheme();
+  const type = useTypeface();
+  const solid = on;
   return (
-    <Pressable onPress={onPress} style={[styles.chip, { backgroundColor: theme.card }, on && { borderWidth: 2, borderColor: theme.primary }]}>
-      <Text style={{ color: color ?? theme.text, fontWeight: '600' }}>{label}</Text>
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.chip,
+        { backgroundColor: solid ? theme.primary : theme.card, borderColor: solid ? theme.primary : theme.border },
+      ]}
+    >
+      <Text style={{ color: solid ? theme.onPrimary : (color ?? (label === 'Needs a ride' ? rideText : theme.text)), fontSize: 13, fontWeight: '600', fontFamily: type.semibold }}>{label}</Text>
+      {typeof count === 'number' && count > 0 && (
+        <View style={[styles.count, { backgroundColor: solid ? '#FFE3A3' : ridePill }]}>
+          <Text style={{ color: rideText, fontSize: 11, fontWeight: '700', fontFamily: type.bold }}>{count}</Text>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -620,12 +706,13 @@ function PersonList({
   onPick: (id: string) => void;
 }) {
   const theme = useTheme();
+  const type = useTypeface();
   return (
     <>
-      <Text style={[styles.sheetTitle, { color: theme.text }]}>{title}</Text>
+      <Text style={[styles.sheetTitle, { color: theme.text, fontFamily: type.extra }]}>{title}</Text>
       {people.map((person) => (
         <Pressable key={person.id || 'none'} style={styles.sheetRow} onPress={() => onPick(person.id)}>
-          <Text style={{ color: person.color, fontWeight: selected === person.id ? '700' : '400' }}>{person.name}</Text>
+          <Text style={{ color: person.color, fontFamily: selected === person.id ? type.bold : type.medium, fontWeight: selected === person.id ? '700' : '500' }}>{person.name}</Text>
         </Pressable>
       ))}
     </>
@@ -633,24 +720,12 @@ function PersonList({
 }
 
 function matchesFilter(event: AppEvent, filter: Filter, deviceCaregiverId: string): boolean {
-  if (filter.kind === 'mine') return event.caregiverId === deviceCaregiverId && !!deviceCaregiverId;
+  if (filter.kind === 'mine') {
+    return !!deviceCaregiverId && (event.caregiverId === deviceCaregiverId || event.caregiverId === WHOLE_FAMILY_ID);
+  }
   if (filter.kind === 'unassigned') return !event.caregiverId;
   if (filter.kind === 'child') return event.childIds.includes(filter.childId);
   return true;
-}
-
-function sameCaregiverClash(event: AppEvent, events: AppEvent[]): boolean {
-  if (!event.caregiverId || event.cancelled) return false;
-  const start = Date.parse(event.startTime);
-  const end = Date.parse(event.endTime);
-  if (Number.isNaN(start) || Number.isNaN(end)) return false;
-  return events.some((other) => {
-    if (other.id === event.id || other.cancelled || other.caregiverId !== event.caregiverId) return false;
-    const otherStart = Date.parse(other.startTime);
-    const otherEnd = Date.parse(other.endTime);
-    if (Number.isNaN(otherStart) || Number.isNaN(otherEnd)) return false;
-    return start < otherEnd && otherStart < end;
-  });
 }
 
 function overlapSegments(events: AppEvent[]): AppEvent[][] {
@@ -730,7 +805,7 @@ function buildDays(events: AppEvent[], weekStart: Date, caregivers: Caregiver[],
     return {
       key,
       name: date ? dayHeading(date, now) : 'Date not set',
-      summary: daySummary(dayEvents, caregivers),
+      summary: daySummary(dayEvents, caregivers, date),
       events: dayEvents,
     };
   }).sort((left, right) => {
@@ -740,15 +815,19 @@ function buildDays(events: AppEvent[], weekStart: Date, caregivers: Caregiver[],
   });
 }
 
-function daySummary(events: AppEvent[], caregivers: Caregiver[]): string {
-  if (events.length === 0) return 'Nothing planned 🎉';
-  const parts = [`${events.length} ${events.length === 1 ? 'event' : 'events'}`];
+function daySummary(events: AppEvent[], caregivers: Caregiver[], date: Date | null): string {
+  if (events.length === 0) return 'Nothing planned';
+  const when = date ? date.toLocaleDateString(undefined, { weekday: 'long' }) : '';
+  const parts = [when, `${events.length} ${events.length === 1 ? 'event' : 'events'}`].filter(Boolean);
+  const open = events.filter((event) => !event.caregiverId && !event.cancelled).length;
+  if (open === 1) parts.push('1 needs a ride');
+  else if (open > 1) parts.push(`${open} need a ride`);
   for (const person of caregivers) {
     const count = events.filter((event) => event.caregiverId === person.id && !event.cancelled).length;
-    if (count > 0) parts.push(`${person.name} has ${count}`);
+    if (count > 0) parts.push(`${person.name} ${count}`);
   }
-  const open = events.filter((event) => !event.caregiverId && !event.cancelled).length;
-  if (open > 0) parts.push(`${open} need someone`);
+  const family = events.filter((event) => event.caregiverId === WHOLE_FAMILY_ID && !event.cancelled).length;
+  if (family > 0) parts.push(`Family ${family}`);
   return parts.join(' · ');
 }
 
@@ -756,8 +835,16 @@ function dotsForDay(events: AppEvent[], caregivers: Caregiver[]): string[] {
   const colors: string[] = [];
   for (const event of events) {
     if (event.cancelled) continue;
-    const color = caregivers.find((person) => person.id === event.caregiverId)?.color ?? '#d97706';
-    if (!colors.includes(color)) colors.push(color);
+    if (event.caregiverId === WHOLE_FAMILY_ID) {
+      for (const person of caregivers.slice(0, 2)) {
+        const color = caregiverLook(person).color;
+        if (!colors.includes(color)) colors.push(color);
+      }
+    } else {
+      const person = caregivers.find((item) => item.id === event.caregiverId);
+      const color = person ? caregiverLook(person).color : '#B07A00';
+      if (!colors.includes(color)) colors.push(color);
+    }
     if (colors.length === 3) break;
   }
   return colors;
@@ -783,9 +870,8 @@ function timeRange(startIso: string, endIso: string, timeTbd = false): string {
   const start = new Date(startIso);
   const end = new Date(endIso);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'Time not set';
-  const clock: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
-  const startText = start.toLocaleTimeString([], clock);
-  const endText = end.toLocaleTimeString([], clock);
+  const startText = start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const endText = end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   if (dayKey(start) === dayKey(end)) return `${startText} – ${endText}`;
   return `${startText} – ${end.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
 }
@@ -811,6 +897,12 @@ function freeLabel(ms: number): string {
 function initial(name: string): string {
   const letter = name.trim().charAt(0);
   return letter ? letter.toUpperCase() : '?';
+}
+
+function clockShort(date: Date): string {
+  const h24 = date.getHours();
+  const h = ((h24 + 11) % 12) + 1;
+  return `${h}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 function dayKey(date: Date): string {
@@ -839,105 +931,110 @@ function addDays(date: Date, days: number): Date {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  pastButton: { paddingHorizontal: 16, paddingTop: 8, alignItems: 'flex-start' },
-  filterBar: { flexGrow: 0, height: 68 },
-  filters: { paddingHorizontal: 16, paddingTop: 12, gap: 8, alignItems: 'center' },
-  weekWrap: { paddingBottom: 4 },
-  weekLabel: { fontSize: 13, paddingHorizontal: 16, marginBottom: 4 },
-  weekRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 8 },
-  weekDay: { width: 44, alignItems: 'center', gap: 2 },
-  weekLetter: { fontSize: 11, fontWeight: '600' },
-  weekCircle: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  dots: { flexDirection: 'row', gap: 2, height: 8, alignItems: 'center' },
+  header: { paddingHorizontal: 20, gap: 12, paddingBottom: 8 },
+  headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  dateLine: { fontSize: 13, fontWeight: '600', flex: 1 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  syncPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
+  syncDot: { width: 7, height: 7, borderRadius: 4 },
+  gear: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  weekTitle: { fontSize: 30, lineHeight: 34, fontWeight: '800', letterSpacing: -0.5 },
+  weekRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  weekDay: { width: 44, alignItems: 'center', gap: 5 },
+  weekTile: { width: 44, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  dots: { flexDirection: 'row', gap: 3, height: 6, alignItems: 'center' },
   dot: { width: 6, height: 6, borderRadius: 3 },
+  filters: { gap: 8, alignItems: 'center', paddingRight: 8 },
   list: { flex: 1 },
-  listContent: { padding: 16, paddingTop: 8, paddingBottom: 108 },
-  title: { fontSize: 22, fontWeight: 'bold', marginBottom: 12 },
-  demo: { fontSize: 12, fontWeight: '700', letterSpacing: 1, color: '#856404', marginBottom: 12 },
-  legend: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  day: { marginBottom: 12 },
-  dayHeading: { fontSize: 22, fontWeight: '700', marginTop: 8 },
-  daySummary: { fontSize: 14, marginBottom: 6 },
-  dayBody: { position: 'relative' },
-  centerLine: { position: 'absolute', top: 0, bottom: 0, left: '50%', width: 1 },
-  overlap: { borderLeftWidth: 3, borderLeftColor: '#856404', paddingLeft: 8 },
-  block: {
-    padding: 14,
-    marginVertical: 8,
-    borderRadius: 16,
-    borderLeftWidth: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
+  listContent: { paddingHorizontal: 20, paddingTop: 4, gap: 10 },
+  demo: { fontSize: 12, fontWeight: '700', letterSpacing: 1, color: '#7A5200' },
+  day: { gap: 10, marginBottom: 8 },
+  dayHeading: { fontSize: 20, fontWeight: '800' },
+  daySummary: { fontSize: 13, fontWeight: '500', marginTop: 2 },
+  segment: { gap: 10 },
+  block: { borderRadius: 16, padding: 14, gap: 10 },
+  shadow: {
+    shadowColor: '#17202A',
+    shadowOpacity: 0.06,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
-  leftCard: { alignSelf: 'flex-start', width: '46%' },
-  rightCard: { alignSelf: 'flex-end', width: '46%' },
-  centerCard: { alignSelf: 'center', width: '72%' },
-  cardRow: { flexDirection: 'row', gap: 10 },
-  cardBody: { flex: 1, gap: 3 },
-  bigIcon: { fontSize: 28 },
-  eventTitle: { fontSize: 17, fontWeight: '600' },
-  meta: { fontSize: 14 },
-  soon: { fontSize: 13, fontWeight: '700' },
+  cardRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  iconTile: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  iconEmoji: { fontSize: 20 },
+  iconDot: { width: 12, height: 12, borderRadius: 6 },
+  cardBody: { flex: 1, gap: 4 },
+  titleRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+  eventTitle: { fontSize: 16, fontWeight: '700' },
+  meta: { fontSize: 13 },
+  soonPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: '#E6EDFB' },
+  soonText: { color: '#1D4FB8', fontSize: 11, fontWeight: '700' },
   struck: { textDecorationLine: 'line-through' },
-  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingTop: 2 },
   childPill: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
-  childPillText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  cancelledTag: { fontSize: 12, fontWeight: '700', marginTop: 2 },
-  needsPill: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4 },
-  needsText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  clash: { fontWeight: '700', marginTop: 4 },
-  waiting: { fontSize: 12, marginTop: 4 },
-  avatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#fff', fontWeight: '700' },
-  nowRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 4 },
-  nowLabel: { fontSize: 12, fontWeight: '800' },
+  childPillText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  tag: { fontSize: 12, fontWeight: '700' },
+  needsPill: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
+  needsText: { fontSize: 11, fontWeight: '700' },
+  familyPill: { alignSelf: 'flex-start', borderRadius: 999, backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingVertical: 2 },
+  familyText: { color: '#17202A', fontSize: 11, fontWeight: '800' },
+  offlineTag: { alignSelf: 'flex-start', borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
+  avatar: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  avatarSm: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#17202A' },
+  avatarStack: { flexDirection: 'row' },
+  avatarText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  drive: { height: 44, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
+  nowRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  nowLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
   nowLine: { flex: 1, height: 2, borderRadius: 1 },
-  gapRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 2 },
-  gapLine: { flex: 1, height: 1 },
-  gapText: { fontSize: 12 },
-  chip: { minHeight: 44, paddingHorizontal: 12, borderRadius: 999, justifyContent: 'center' },
-  laneAction: { width: 96, justifyContent: 'center', alignItems: 'center', marginVertical: 8, borderRadius: 16 },
+  nowDot: { width: 9, height: 9, borderRadius: 5 },
+  gapWrap: { alignItems: 'center' },
+  gapPill: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
+  chip: { height: 36, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  count: { minWidth: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  laneAction: { width: 96, justifyContent: 'center', alignItems: 'center', borderRadius: 16 },
   laneActionText: { color: '#fff', fontWeight: '700', paddingHorizontal: 8 },
   fab: {
     position: 'absolute',
-    right: 16,
-    bottom: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    right: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 6,
     elevation: 6,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    zIndex: 30,
+    shadowColor: '#17202A',
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
   },
   fabText: { fontSize: 32, lineHeight: 34, fontWeight: '500' },
-  backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },
-  sheet: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, gap: 8 },
+  backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(23,32,42,0.42)' },
+  sheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingBottom: 28, paddingTop: 8, gap: 4 },
   addSheet: { maxHeight: '88%' },
   addContent: { gap: 12, paddingBottom: 12 },
-  sheetTitle: { fontSize: 18, fontWeight: '700' },
-  sheetRow: { minHeight: 44, justifyContent: 'center' },
+  handle: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, marginBottom: 8 },
+  sheetTitle: { fontSize: 22, fontWeight: '800' },
+  sheetRow: { minHeight: 48, justifyContent: 'center' },
   sheetText: { fontSize: 16 },
-  quickInput: { borderBottomWidth: 1, fontSize: 18, minHeight: 48 },
+  quickInput: { borderWidth: 2, borderRadius: 14, fontSize: 17, minHeight: 52, paddingHorizontal: 16 },
   preview: { borderRadius: 16, padding: 14, gap: 4 },
-  previewTitle: { fontSize: 17, fontWeight: '600' },
+  previewTitle: { fontSize: 16, fontWeight: '700' },
   toast: {
     position: 'absolute',
-    left: 16,
-    right: 88,
-    bottom: 28,
-    minHeight: 44,
-    borderRadius: 999,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    zIndex: 25,
+    left: 20,
+    right: 96,
+    height: 52,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingLeft: 16,
+    paddingRight: 8,
+    zIndex: 8,
   },
-  toastText: { fontWeight: '600' },
+  toastText: { fontWeight: '600', fontSize: 14, flex: 1 },
+  undo: { height: 40, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#2E3A47', alignItems: 'center', justifyContent: 'center' },
 });

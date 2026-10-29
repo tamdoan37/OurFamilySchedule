@@ -64,7 +64,7 @@ export function ScheduleNotices({ onOpenEvent }: { onOpenEvent: (eventId: string
   const theme = useTheme();
   if (items.length === 0) return null;
   return (
-    <View pointerEvents="box-none" style={[styles.wrap, { bottom: insets.bottom + 88 }]}>
+    <View pointerEvents="box-none" style={[styles.wrap, { bottom: insets.bottom + 156 }]}>
       {items.map((item) => (
         <View key={item.key} style={[styles.card, { backgroundColor: theme.sheet, borderColor: theme.border }]}>
           {item.kind === 'assigned' ? (

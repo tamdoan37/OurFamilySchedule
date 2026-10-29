@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { View, Text, TextInput, StyleSheet, Pressable, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Crypto from 'expo-crypto';
-import { Caregiver, ChecklistItem, Child } from '../types';
+import { Caregiver, ChecklistItem, Child, WHOLE_FAMILY_ID } from '../types';
 import { PillButton } from './PillButton';
 import { useTheme } from '../theme';
 
@@ -160,7 +160,7 @@ export function EventFields({
       />
       <Text style={[styles.label, { color: theme.text }]}>Caregiver on duty</Text>
       <ChoiceRow
-        options={[{ id: '', label: 'Unassigned', color: '#666' }, ...caregivers.map((person) => ({ id: person.id, label: person.name, color: person.color }))]}
+        options={[{ id: '', label: 'Needs a ride', color: '#B07A00' }, { id: WHOLE_FAMILY_ID, label: 'Whole family', color: '#17202A' }, ...caregivers.map((person) => ({ id: person.id, label: person.name, color: person.color }))]}
         selected={[value.caregiverId]}
         onToggle={(id) => onChange({ ...value, caregiverId: id })}
       />

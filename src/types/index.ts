@@ -1,3 +1,5 @@
+export const WHOLE_FAMILY_ID = 'both';
+
 export interface ChecklistItem {
   id: string;
   text: string;

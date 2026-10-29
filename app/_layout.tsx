@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { View, Text, StyleSheet, Button } from 'react-native';
+import { useFonts, PlusJakartaSans_500Medium, PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { useScheduleStore } from '../src/store/scheduleStore';
@@ -7,6 +8,7 @@ import SyncStatus from '../src/components/SyncStatus';
 import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
 import { ScheduleNotices, startNotices } from '../src/notifications/notices';
 import { startNotificationNavigation, startReminders } from '../src/notifications/reminders';
+import { FontReadyContext } from '../src/fonts';
 import { useTheme } from '../src/theme';
 
 export default function RootLayout() {
@@ -20,6 +22,13 @@ export default function RootLayout() {
   const pathname = usePathname();
   const router = useRouter();
   const theme = useTheme();
+  const [fontsLoaded, fontError] = useFonts({
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
+  });
+  const typeReady = fontsLoaded && !fontError;
 
   useEffect(() => {
     void hydrate();
@@ -52,7 +61,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (!ready || pathname === '/setup') return;
     const ownerKnown = caregivers.some((person) => person.id === deviceCaregiverId);
-    if (pathname === '/settings') {
+    if (pathname === '/settings' || pathname === '/pair') {
       if (paired && caregivers.length > 0 && !ownerKnown) router.replace('/setup');
       return;
     }
@@ -61,31 +70,34 @@ export default function RootLayout() {
   }, [ready, caregivers, deviceCaregiverId, paired, pathname, router]);
 
   return (
+    <FontReadyContext.Provider value={typeReady}>
     <GestureHandlerRootView style={styles.root}>
       <Stack
         screenOptions={{
-          headerRight: () => <SyncStatus />,
           headerStyle: { backgroundColor: theme.bg },
           headerTintColor: theme.text,
           headerTitleStyle: { color: theme.text },
           contentStyle: { backgroundColor: theme.bg },
         }}
       >
-        <Stack.Screen name="index" options={{ title: 'OurFamilySchedule' }} />
-        <Stack.Screen name="setup" options={{ title: 'Family setup' }} />
-        <Stack.Screen name="capture" options={{ title: 'Scan Schedule' }} />
-        <Stack.Screen name="timeline" options={{ title: 'Timeline' }} />
-        <Stack.Screen name="event/[id]" options={{ title: 'Edit event' }} />
-        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+        <Stack.Screen name="index" options={{ title: 'OurFamilySchedule', headerRight: () => <SyncStatus /> }} />
+        <Stack.Screen name="setup" options={{ title: 'Family setup', headerRight: () => <SyncStatus /> }} />
+        <Stack.Screen name="capture" options={{ headerShown: false }} />
+        <Stack.Screen name="timeline" options={{ headerShown: false }} />
+        <Stack.Screen name="notes" options={{ headerShown: false }} />
+        <Stack.Screen name="pair" options={{ headerShown: false }} />
+        <Stack.Screen name="event/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="settings" options={{ title: 'Settings', headerRight: () => <SyncStatus /> }} />
       </Stack>
       <ScheduleNotices onOpenEvent={(eventId) => router.push(`/event/${eventId}`)} />
-      {!ready && (
+      {(!ready || (!fontsLoaded && !fontError)) && (
         <View style={[styles.loading, { backgroundColor: theme.bg }]}>
           <Text style={[styles.loadingText, { color: theme.muted }]}>{loadError || 'Loading…'}</Text>
           {!!loadError && <Button title="Try again" onPress={() => void retryHydrate()} />}
         </View>
       )}
     </GestureHandlerRootView>
+    </FontReadyContext.Provider>
   );
 }
 

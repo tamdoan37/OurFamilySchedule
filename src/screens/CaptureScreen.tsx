@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { View, Text, Image, StyleSheet, Alert, ScrollView, Pressable, Switch, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
@@ -14,6 +14,7 @@ import { draftProblems, findDuplicateId } from '../parser/reviewDrafts';
 import { DraftEvent, ChecklistItem } from '../types';
 import { ChoiceRow, EventDraftFields, EventFields, IconField } from '../components/EventFields';
 import { PillButton } from '../components/PillButton';
+import { TabBar } from '../components/TabBar';
 import { Theme, useTheme } from '../theme';
 
 type ReviewRow = {
@@ -62,6 +63,12 @@ export default function CaptureScreen() {
   const [reading, setReading] = useState(false);
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const frame = (body: ReactNode) => (
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <View style={{ flex: 1 }}>{body}</View>
+      <TabBar />
+    </View>
+  );
   const [untilKey, setUntilKey] = useState<string | null>(null);
 
   async function openPhoto(uri: string) {
@@ -301,42 +308,42 @@ export default function CaptureScreen() {
 
   if (!photoUri) {
     if (reading) {
-      return (
+      return frame(
         <View style={styles.center}>
           <Text>Reading the schedule…</Text>
-        </View>
+        </View>,
       );
     }
     if (!permission) {
-      return (
+      return frame(
         <View style={styles.center}>
           <Text>Loading…</Text>
-        </View>
+        </View>,
       );
     }
     if (!permission.granted) {
-      return (
+      return frame(
         <View style={styles.center}>
           <Text style={styles.note}>Camera permission is needed to take a photo of a schedule.</Text>
           <PillButton title="Allow camera" onPress={() => void requestPermission()} />
           <PillButton title="Photo library" variant="secondary" onPress={() => void pickPhoto()} />
-        </View>
+        </View>,
       );
     }
-    return (
+    return frame(
       <View style={styles.cameraWrap}>
         <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
         <View style={styles.cameraActions}>
           <PillButton title="Take photo" onPress={() => void takePhoto()} />
           <PillButton title="Photo library" variant="secondary" onPress={() => void pickPhoto()} />
         </View>
-      </View>
+      </View>,
     );
   }
 
   const saveCount = rows.reduce((sum, row) => sum + rowSaveCount(row), 0);
 
-  return (
+  return frame(
     <ScrollView style={{ flex: 1, backgroundColor: theme.bg }} contentContainerStyle={styles.review} keyboardShouldPersistTaps="handled">
       <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="contain" />
       {rows.length === 0 && <Text style={styles.note}>No events were read from this photo.</Text>}
@@ -353,7 +360,7 @@ export default function CaptureScreen() {
           />
           <Text style={styles.label}>Caregiver on duty</Text>
           <ChoiceRow
-            options={[{ id: '', label: 'Unassigned', color: '#666' }, ...caregivers.map((person) => ({ id: person.id, label: person.name, color: person.color }))]}
+            options={[{ id: '', label: 'Needs a ride', color: '#B07A00' }, ...caregivers.map((person) => ({ id: person.id, label: person.name, color: person.color }))]}
             selected={[allCaregiverId]}
             onToggle={applyCaregiver}
           />
@@ -456,7 +463,7 @@ export default function CaptureScreen() {
         onPress={() => void save()}
         disabled={saving || saveCount === 0}
       />
-    </ScrollView>
+    </ScrollView>,
   );
 }
 
@@ -518,7 +525,7 @@ function makeStyles(theme: Theme) {
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, padding: 24, backgroundColor: theme.bg },
     cameraWrap: { flex: 1, backgroundColor: '#000', justifyContent: 'flex-end' },
     cameraActions: { padding: 16, gap: 12, backgroundColor: 'rgba(0,0,0,0.35)' },
-    review: { padding: 16, gap: 12, backgroundColor: theme.bg },
+    review: { padding: 16, paddingBottom: 28, gap: 12, backgroundColor: theme.bg },
     photo: { height: 220, width: '100%', backgroundColor: '#111', borderRadius: 12 },
     note: { fontSize: 14, color: theme.muted },
     heading: { fontSize: 18, fontWeight: '600', marginTop: 8, color: theme.text },
