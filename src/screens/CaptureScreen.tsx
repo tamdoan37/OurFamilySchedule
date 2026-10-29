@@ -525,7 +525,7 @@ function makeStyles(theme: Theme) {
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, padding: 24, backgroundColor: theme.bg },
     cameraWrap: { flex: 1, backgroundColor: '#000', justifyContent: 'flex-end' },
     cameraActions: { padding: 16, gap: 12, backgroundColor: 'rgba(0,0,0,0.35)' },
-    review: { padding: 16, paddingBottom: 28, gap: 12, backgroundColor: theme.bg },
+    review: { padding: 16, paddingBottom: 120, gap: 12, backgroundColor: theme.bg },
     photo: { height: 220, width: '100%', backgroundColor: '#111', borderRadius: 12 },
     note: { fontSize: 14, color: theme.muted },
     heading: { fontSize: 18, fontWeight: '600', marginTop: 8, color: theme.text },

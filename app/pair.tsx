@@ -137,13 +137,13 @@ export default function PairScreen() {
         <Text style={[styles.kicker, { color: theme.muted, fontFamily: type.semibold }]}>This phone</Text>
         <Text style={[styles.title, { color: theme.text, fontFamily: type.extra }]}>Pair</Text>
         {!syncSupported() && (
-          <View style={[styles.card, { backgroundColor: theme.card }]}>
+          <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.cardTitle, { color: theme.text, fontFamily: type.bold }]}>Development build</Text>
             <Text style={styles.note}>Sync needs a development build. The schedule on this phone still works.</Text>
           </View>
         )}
         {syncSupported() && (
-          <View style={[styles.card, { backgroundColor: theme.card }]}>
+          <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.cardTitle, { color: theme.text, fontFamily: type.bold }]}>{paired ? 'Paired' : 'Not paired yet'}</Text>
             <Text style={styles.note}>The family key stays on the phones. The relay only stores encrypted messages.</Text>
             {paired && <Text style={styles.note}>{syncStatus === 'synced' ? 'Synced' : syncStatus === 'syncing' ? 'Syncing…' : 'Offline'}</Text>}
@@ -218,12 +218,12 @@ function usePairStyles() {
   const type = useTypeface();
   return useMemo(() => StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.bg },
-    page: { paddingHorizontal: 20, paddingBottom: 24, gap: 12 },
-    kicker: { fontSize: 13, fontWeight: '600' },
-    title: { fontSize: 30, lineHeight: 34, fontWeight: '800', letterSpacing: -0.5 },
-    card: { borderRadius: 16, padding: 16, gap: 10 },
-    cardTitle: { fontSize: 16, fontWeight: '700' },
-    label: { fontSize: 14, fontWeight: '700', marginTop: 4 },
+    page: { paddingHorizontal: 20, paddingBottom: 120, gap: 12 },
+    kicker: { fontSize: 13 },
+    title: { fontSize: 30, lineHeight: 33, letterSpacing: -0.5 },
+    card: { borderRadius: 16, padding: 16, gap: 10, borderWidth: 1 },
+    cardTitle: { fontSize: 16 },
+    label: { fontSize: 14, marginTop: 4 },
     note: { fontSize: 14, color: theme.muted, fontFamily: type.medium },
     input: { borderWidth: 1, borderRadius: 14, fontSize: 16, minHeight: 48, paddingHorizontal: 14 },
     button: { minHeight: 48, borderRadius: 999, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },

@@ -137,8 +137,8 @@ function useSettingsStyles() {
   const type = useTypeface();
   return useMemo(() => StyleSheet.create({
     container: { padding: 20, gap: 12, backgroundColor: theme.bg },
-    title: { fontSize: 22, fontWeight: '800', color: theme.text, fontFamily: type.extra, marginTop: 8 },
-    label: { fontSize: 14, fontWeight: '700', marginTop: 4, color: theme.text, fontFamily: type.bold },
+    title: { fontSize: 22, color: theme.text, fontFamily: type.extra, marginTop: 8 },
+    label: { fontSize: 14, marginTop: 4, color: theme.text, fontFamily: type.bold },
     note: { fontSize: 14, color: theme.muted, fontFamily: type.medium },
     choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     choice: { borderWidth: 1, borderColor: theme.border, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: theme.card },

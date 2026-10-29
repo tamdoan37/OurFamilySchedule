@@ -11,6 +11,7 @@ export type Theme = {
   onPrimary: string;
   danger: string;
   now: string;
+  nowLine: string;
   amber: string;
   amberBg: string;
   sheet: string;
@@ -18,6 +19,16 @@ export type Theme = {
   meta: string;
   line: string;
   synced: string;
+  cardWarm: string;
+  divider: string;
+  softFill: string;
+  darkCard: string;
+  darkCardInner: string;
+  darkCardMeta: string;
+  rideBorder: string;
+  ridePill: string;
+  rideText: string;
+  cancelledBg: string;
 };
 
 const light: Theme = {
@@ -31,6 +42,7 @@ const light: Theme = {
   onPrimary: '#FFFFFF',
   danger: '#B3392B',
   now: '#C5221F',
+  nowLine: '#D93025',
   amber: '#B07A00',
   amberBg: '#FFF8E6',
   sheet: '#FFFFFF',
@@ -38,6 +50,16 @@ const light: Theme = {
   meta: '#3F4A55',
   line: '#E3DACD',
   synced: '#0B5E5B',
+  cardWarm: '#FFFDF9',
+  divider: '#F0E9DE',
+  softFill: '#FAF6EF',
+  darkCard: '#17202A',
+  darkCardInner: '#2E3A47',
+  darkCardMeta: '#C9D1D9',
+  rideBorder: '#B07A00',
+  ridePill: '#FFE3A3',
+  rideText: '#7A5200',
+  cancelledBg: '#E9ECEF',
 };
 
 const dark: Theme = {
@@ -51,6 +73,7 @@ const dark: Theme = {
   onPrimary: '#1C1712',
   danger: '#F0A8A0',
   now: '#FF8A80',
+  nowLine: '#FF8A80',
   amber: '#E3B15A',
   amberBg: '#3A2C16',
   sheet: '#2A241C',
@@ -58,28 +81,77 @@ const dark: Theme = {
   meta: '#D5CBBF',
   line: '#4A4036',
   synced: '#8FDED8',
+  cardWarm: '#241E18',
+  divider: '#3A322A',
+  softFill: '#322A22',
+  darkCard: '#101418',
+  darkCardInner: '#2E3A47',
+  darkCardMeta: '#C9D1D9',
+  rideBorder: '#E3B15A',
+  ridePill: '#5A4318',
+  rideText: '#E3B15A',
+  cancelledBg: '#2C3136',
 };
 
 export function useTheme(): Theme {
   return useColorScheme() === 'dark' ? dark : light;
 }
 
-export const momColor = '#C2412F';
-export const momTint = '#FCEBE8';
-export const dadColor = '#0F7C78';
-export const dadTint = '#E3F4F3';
-export const ridePill = '#FFE3A3';
-export const rideText = '#7A5200';
+export type Look = { solid: string; tint: string; text: string };
 
-const MOM_COLORS = new Set(['#c2412f', '#ff6b6b', '#b3392b']);
-const DAD_COLORS = new Set(['#0f7c78', '#4ecdc4', '#0b5e5b']);
+export const momLook: Look = { solid: '#C2412F', tint: '#FCEBE8', text: '#B3392B' };
+export const dadLook: Look = { solid: '#0F7C78', tint: '#E3F4F3', text: '#0B5E5B' };
 
-export function caregiverLook(person: { name: string; color: string }): { color: string; tint: string } {
+export const momColor = momLook.solid;
+export const momTint = momLook.tint;
+export const dadColor = dadLook.solid;
+export const dadTint = dadLook.tint;
+export const ridePill = light.ridePill;
+export const rideText = light.rideText;
+
+export const KID_PALETTES: (Look & { name: string })[] = [
+  { name: 'Blue', solid: '#1D4FB8', tint: '#E6EDFB', text: '#1D4FB8' },
+  { name: 'Pink', solid: '#B0215E', tint: '#FBE7EF', text: '#B0215E' },
+  { name: 'Green', solid: '#17773A', tint: '#E3F3E8', text: '#17773A' },
+  { name: 'Purple', solid: '#5A3FB0', tint: '#EFEAFB', text: '#5A3FB0' },
+  { name: 'Amber', solid: '#8A5A12', tint: '#FBF0DD', text: '#8A5A12' },
+];
+
+export function laneLook(index: number, color = '#5B6673'): Look {
+  if (index === 0) return momLook;
+  if (index === 1) return dadLook;
+  return { solid: color, tint: '#FFFFFF', text: color };
+}
+
+export function kidLook(child: { palette?: string; color?: string }): Look & { name: string } {
+  const named = KID_PALETTES.find((entry) => entry.name === child.palette);
+  if (named) return named;
+  return closestKidPalette(child.color ?? '');
+}
+
+export function closestKidPalette(hex: string): Look & { name: string } {
+  const color = parseHex(hex);
+  if (!color) return KID_PALETTES[0];
+  let best = KID_PALETTES[0];
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const entry of KID_PALETTES) {
+    const solid = parseHex(entry.solid);
+    if (!solid) continue;
+    const distance = (color[0] - solid[0]) ** 2 + (color[1] - solid[1]) ** 2 + (color[2] - solid[2]) ** 2;
+    if (distance < bestDistance) {
+      best = entry;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+export function caregiverLook(person: { name: string; color: string }, index = -1): Look {
+  if (index === 0 || index === 1) return laneLook(index, person.color);
   const name = person.name.trim().toLowerCase();
-  const color = person.color.trim().toLowerCase();
-  if (name === 'mom' || MOM_COLORS.has(color)) return { color: momColor, tint: momTint };
-  if (name === 'dad' || DAD_COLORS.has(color)) return { color: dadColor, tint: dadTint };
-  return { color: person.color, tint: tintColor(person.color, '#FFFFFF', 0.16) };
+  if (name === 'mom') return momLook;
+  if (name === 'dad') return dadLook;
+  return { solid: person.color, tint: tintColor(person.color, '#FFFFFF', 0.16), text: person.color };
 }
 
 export function tintColor(hex: string, toward: string, amount: number): string {

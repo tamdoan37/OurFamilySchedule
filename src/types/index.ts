@@ -26,6 +26,7 @@ export interface AppEvent {
   cancelled: boolean;
   coverRequestedBy: string;
   checklist: ChecklistItem[];
+  noRide: boolean;
 }
 
 export interface Caregiver {
@@ -34,10 +35,15 @@ export interface Caregiver {
   color: string;
 }
 
+export type Pronoun = 'himself' | 'herself' | 'themselves';
+
 export interface Child {
   id: string;
   name: string;
   color: string;
+  palette: string;
+  canDrive: boolean;
+  pronouns: Pronoun;
 }
 
 export interface DraftEvent {
@@ -75,4 +81,5 @@ export type EventField =
   | 'timeTbd'
   | 'cancelled'
   | 'coverRequestedBy'
-  | 'checklist';
+  | 'checklist'
+  | 'noRide';

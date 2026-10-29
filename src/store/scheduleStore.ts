@@ -2,12 +2,13 @@ import { create } from 'zustand';
 import { AppState } from 'react-native';
 import * as Y from 'yjs';
 import * as Crypto from 'expo-crypto';
-import * as SQLite from 'expo-sqlite';
-import { AppEvent, Caregiver, ChecklistItem, Child, EventField } from '../types';
+import { openDatabaseAsync, type ScheduleDatabase } from '../db/openDatabase';
+import { AppEvent, Caregiver, ChecklistItem, Child, EventField, Pronoun } from '../types';
 import { emitLocalClaim, emitLocalUpdate } from '../sync/bridge';
 import { loadSyncEngine } from '../sync/loadSync';
 import { emitClaimAttempt, emitScheduleObserved } from '../notifications/bridge';
 import { clampLead } from '../notifications/planReminders';
+import { closestKidPalette, kidLook } from '../theme';
 
 interface ScheduleState {
   ready: boolean;
@@ -27,7 +28,7 @@ interface ScheduleState {
   hydrate: () => Promise<void>;
   retryHydrate: () => Promise<void>;
   addCaregiver: (name: string, color: string) => string;
-  addChild: (name: string, color: string) => string;
+  addChild: (name: string, color: string, extra?: { palette?: string; canDrive?: boolean; pronouns?: Pronoun }) => string;
   setDeviceCaregiver: (caregiverId: string) => Promise<void>;
   addEvent: (input: NewEvent) => string;
   updateEventField: (id: string, field: EventField, value: string | boolean | string[] | ChecklistItem[]) => void;
@@ -55,6 +56,7 @@ type NewEvent = {
   cancelled?: boolean;
   coverRequestedBy?: string;
   checklist?: ChecklistItem[];
+  noRide?: boolean;
 };
 
 type EventPatch = Partial<{
@@ -74,6 +76,7 @@ type EventPatch = Partial<{
   cancelled: boolean;
   coverRequestedBy: string;
   checklist: ChecklistItem[];
+  noRide: boolean;
 }>;
 
 const ydocHolder: { current: Y.Doc } = { current: new Y.Doc() };
@@ -86,14 +89,14 @@ const SAVE_DELAY_MS = 500;
 let persistenceEnabled = false;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let hydratePromise: Promise<void> | null = null;
-let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
-let database: SQLite.SQLiteDatabase | null = null;
+let databasePromise: Promise<ScheduleDatabase> | null = null;
+let database: ScheduleDatabase | null = null;
 let loadGeneration = 0;
 
 function getDatabase() {
   if (!databasePromise) {
     databasePromise = (async () => {
-      const db = await SQLite.openDatabaseAsync('our-family-schedule.db');
+      const db = await openDatabaseAsync('our-family-schedule.db');
       await db.execAsync(`
         CREATE TABLE IF NOT EXISTS local_state (
           id INTEGER PRIMARY KEY NOT NULL,
@@ -151,7 +154,7 @@ export function getScheduleDatabase() {
   return getDatabase();
 }
 
-async function addColumn(db: SQLite.SQLiteDatabase, sql: string) {
+async function addColumn(db: ScheduleDatabase, sql: string) {
   try {
     await db.execAsync(sql);
   } catch {
@@ -308,16 +311,34 @@ function readCaregivers(): Caregiver[] {
     const map = value as Y.Map<string>;
     rows.push({ id, name: map.get('name') ?? '', color: map.get('color') ?? '#666666' });
   });
-  return rows.sort((a, b) => a.name.localeCompare(b.name));
+  if (rows.length === 2) {
+    const first = rows[0].name.trim().toLowerCase();
+    const second = rows[1].name.trim().toLowerCase();
+    if (first === 'dad' && second === 'mom') return [rows[1], rows[0]];
+  }
+  return rows;
+}
+
+function readPronoun(value: string | undefined): Pronoun {
+  if (value === 'himself' || value === 'herself') return value;
+  return 'themselves';
 }
 
 function readChildren(): Child[] {
   const rows: Child[] = [];
   childrenMap().forEach((value, id) => {
     const map = value as Y.Map<string>;
-    rows.push({ id, name: map.get('name') ?? '', color: map.get('color') ?? '#666666' });
+    const look = kidLook({ palette: map.get('palette') ?? '', color: map.get('color') ?? '' });
+    rows.push({
+      id,
+      name: map.get('name') ?? '',
+      color: look.solid,
+      palette: look.name,
+      canDrive: map.get('canDrive') === '1',
+      pronouns: readPronoun(map.get('pronouns')),
+    });
   });
-  return rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows;
 }
 
 function readEvents(): AppEvent[] {
@@ -345,6 +366,7 @@ function readEvents(): AppEvent[] {
       cancelled: map.get('cancelled') === true,
       coverRequestedBy: typeof map.get('coverRequestedBy') === 'string' ? String(map.get('coverRequestedBy')) : '',
       checklist: readChecklist(map),
+      noRide: map.get('noRide') === true,
     });
   });
   return rows.sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
@@ -414,6 +436,7 @@ function writeEvent(input: NewEvent & { id: string }) {
   map.set('timeTbd', input.timeTbd === true);
   map.set('cancelled', input.cancelled === true);
   map.set('coverRequestedBy', input.coverRequestedBy ?? '');
+  map.set('noRide', input.noRide === true);
   writeChildIds(map, input.childIds ?? []);
   writeChecklist(map, input.checklist ?? []);
   stamp(map);
@@ -467,12 +490,17 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
     });
     return id;
   },
-  addChild: (name, color) => {
+  addChild: (name, color, extra) => {
     const id = Crypto.randomUUID();
+    const look = kidLook({ palette: extra?.palette, color: extra?.palette ? '' : color });
+    const stored = extra?.palette ? look : closestKidPalette(color);
     ydoc().transact(() => {
       const map = new Y.Map<string>();
       map.set('name', name.trim());
-      map.set('color', color);
+      map.set('color', stored.solid);
+      map.set('palette', stored.name);
+      map.set('canDrive', extra?.canDrive ? '1' : '0');
+      map.set('pronouns', extra?.pronouns === 'himself' || extra?.pronouns === 'herself' ? extra.pronouns : 'themselves');
       childrenMap().set(id, map);
     });
     return id;
@@ -515,7 +543,9 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
     if (!caregiverId) return;
     const offline = get().paired && (get().syncStatus === 'offline' || get().syncWaiting > 0);
     emitClaimAttempt(id, offline);
-    get().updateEventField(id, 'caregiverId', caregiverId);
+    const map = eventsMap().get(id) as Y.Map<unknown> | undefined;
+    if (map?.get('noRide') === true) get().updateEventFields(id, { caregiverId, noRide: false });
+    else get().updateEventField(id, 'caregiverId', caregiverId);
   },
   unclaimEvent: (id) => {
     get().updateEventField(id, 'caregiverId', '');

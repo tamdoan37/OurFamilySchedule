@@ -22,7 +22,7 @@ export default function NotesScreen() {
         <Text style={[styles.kicker, { color: theme.muted, fontFamily: type.semibold }]}>For the drive</Text>
         <Text style={[styles.title, { color: theme.text, fontFamily: type.extra }]}>Notes</Text>
         {notes.length === 0 && (
-          <View style={[styles.card, styles.shadow, { backgroundColor: theme.card }]}>
+          <View style={[styles.card, styles.shadow, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={{ color: theme.text, fontFamily: type.bold, fontSize: 16 }}>Nothing written down yet</Text>
             <Text style={{ color: theme.muted, fontFamily: type.medium, marginTop: 4 }}>Notes and the bring list live on each event.</Text>
           </View>
@@ -34,7 +34,7 @@ export default function NotesScreen() {
             ? 'Time not set'
             : when.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
           return (
-            <Pressable key={event.id} onPress={() => router.push(`/event/${event.id}`)} style={[styles.card, styles.shadow, { backgroundColor: theme.card }]}>
+            <Pressable key={event.id} onPress={() => router.push(`/event/${event.id}`)} style={[styles.card, styles.shadow, { backgroundColor: theme.card, borderColor: theme.border }]}>
               <Text style={{ color: theme.text, fontSize: 16, fontFamily: type.bold }}>{event.title}</Text>
               <Text style={{ color: theme.meta, fontSize: 13, fontFamily: type.medium, marginTop: 2 }}>{whenText}</Text>
               {!!event.notes && <Text style={{ color: theme.text, fontSize: 14, fontFamily: type.medium, marginTop: 8 }}>{event.notes}</Text>}
@@ -52,10 +52,10 @@ export default function NotesScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  page: { paddingHorizontal: 20, paddingBottom: 24, gap: 12 },
-  kicker: { fontSize: 13, fontWeight: '600' },
-  title: { fontSize: 30, lineHeight: 34, fontWeight: '800', letterSpacing: -0.5, marginBottom: 4 },
-  card: { borderRadius: 16, padding: 16 },
+  page: { paddingHorizontal: 20, paddingBottom: 120, gap: 12 },
+  kicker: { fontSize: 13 },
+  title: { fontSize: 30, lineHeight: 33, letterSpacing: -0.5, marginBottom: 4 },
+  card: { borderRadius: 16, padding: 16, borderWidth: 1 },
   shadow: {
     shadowColor: '#17202A',
     shadowOpacity: 0.06,

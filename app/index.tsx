@@ -50,8 +50,8 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, padding: 24 },
-  title: { fontSize: 28, fontWeight: 'bold' },
+  title: { fontSize: 28 },
   sub: { fontSize: 14, marginBottom: 8, textAlign: 'center' },
   button: { minWidth: 240 },
+  container: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, padding: 24, paddingBottom: 100 },
 });

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { View, Text, StyleSheet, Button } from 'react-native';
+import { Platform, View, Text, StyleSheet, Button } from 'react-native';
 import { useFonts, PlusJakartaSans_500Medium, PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, usePathname, useRouter } from 'expo-router';
@@ -69,9 +69,12 @@ export default function RootLayout() {
     else if (caregivers.length > 0 && !ownerKnown) router.replace('/setup');
   }, [ready, caregivers, deviceCaregiverId, paired, pathname, router]);
 
+  const simulator = Platform.OS === 'web';
+
   return (
     <FontReadyContext.Provider value={typeReady}>
-    <GestureHandlerRootView style={styles.root}>
+    <View style={simulator ? styles.stage : styles.root}>
+    <GestureHandlerRootView style={simulator ? styles.phone : styles.root}>
       <Stack
         screenOptions={{
           headerStyle: { backgroundColor: theme.bg },
@@ -97,12 +100,31 @@ export default function RootLayout() {
         </View>
       )}
     </GestureHandlerRootView>
+    </View>
     </FontReadyContext.Provider>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  stage: {
+    flex: 1,
+    backgroundColor: '#cfc6ba',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  phone: {
+    width: 406,
+    height: 860,
+    maxWidth: '100%',
+    maxHeight: '100%',
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#F2ECE3',
+    borderRadius: 32,
+    borderWidth: 8,
+    borderColor: '#1c1917',
+  },
   loading: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 10,

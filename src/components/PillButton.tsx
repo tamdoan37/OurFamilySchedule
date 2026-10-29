@@ -1,5 +1,6 @@
 import { forwardRef, type ElementRef } from 'react';
 import { Pressable, Text, StyleSheet, PressableProps, ViewStyle, StyleProp } from 'react-native';
+import { useTypeface } from '../fonts';
 import { useTheme } from '../theme';
 
 type Props = Omit<PressableProps, 'style'> & {
@@ -14,6 +15,7 @@ export const PillButton = forwardRef<ElementRef<typeof Pressable>, Props>(functi
   ref,
 ) {
   const theme = useTheme();
+  const type = useTypeface();
   const primary = variant === 'primary';
   return (
     <Pressable
@@ -32,7 +34,7 @@ export const PillButton = forwardRef<ElementRef<typeof Pressable>, Props>(functi
       ]}
       {...rest}
     >
-      <Text style={{ color: primary ? theme.onPrimary : theme.primary, fontWeight: '700', fontSize: compact ? 14 : 16 }}>
+      <Text style={{ color: primary ? theme.onPrimary : theme.primary, fontFamily: type.bold, fontSize: compact ? 14 : 16 }}>
         {title}
       </Text>
     </Pressable>

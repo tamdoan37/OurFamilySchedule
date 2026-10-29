@@ -4,7 +4,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Crypto from 'expo-crypto';
 import { Caregiver, ChecklistItem, Child, WHOLE_FAMILY_ID } from '../types';
 import { PillButton } from './PillButton';
-import { useTheme } from '../theme';
+import { kidLook, laneLook, useTheme } from '../theme';
 
 const ICONS = ['⚽', '🎹', '🩺', '🏫', '⭐'];
 
@@ -19,6 +19,7 @@ export type EventDraftFields = {
   timeTbd?: boolean;
   notes: string;
   checklist: ChecklistItem[];
+  noRide?: boolean;
 };
 
 export function EventFields({
@@ -154,20 +155,39 @@ export function EventFields({
       </View>
       <Text style={[styles.label, { color: theme.text }]}>Children</Text>
       <ChoiceRow
-        options={children.map((child) => ({ id: child.id, label: child.name, color: child.color }))}
+        options={children.map((child) => ({ id: child.id, label: child.name, color: kidLook(child).text }))}
         selected={value.childIds}
         onToggle={(id) => onChange({ ...value, childIds: toggleId(value.childIds, id) })}
       />
       <Text style={[styles.label, { color: theme.text }]}>Caregiver on duty</Text>
       <ChoiceRow
-        options={[{ id: '', label: 'Needs a ride', color: '#B07A00' }, { id: WHOLE_FAMILY_ID, label: 'Whole family', color: '#17202A' }, ...caregivers.map((person) => ({ id: person.id, label: person.name, color: person.color }))]}
-        selected={[value.caregiverId]}
-        onToggle={(id) => onChange({ ...value, caregiverId: id })}
+        options={driverOptions(caregivers, children, theme.rideText, theme.muted)}
+        selected={[value.noRide ? NO_RIDE : value.caregiverId]}
+        onToggle={(id) => {
+          if (id === NO_RIDE) onChange({ ...value, caregiverId: '', noRide: true });
+          else onChange({ ...value, caregiverId: id, noRide: false });
+        }}
       />
       <Text style={[styles.label, { color: theme.text }]}>Icon</Text>
       <IconField value={value.icon} onChange={(icon) => onChange({ ...value, icon })} />
     </View>
   );
+}
+
+const NO_RIDE = '__noride';
+
+function driverOptions(caregivers: Caregiver[], children: Child[], ride: string, muted: string) {
+  return [
+    { id: '', label: 'Needs a ride', color: ride },
+    { id: WHOLE_FAMILY_ID, label: 'Whole family', color: '#17202A' },
+    ...caregivers.map((person, index) => ({ id: person.id, label: person.name, color: laneLook(index, person.color).text })),
+    ...children.filter((child) => child.canDrive).map((child) => ({
+      id: `self:${child.id}`,
+      label: `${child.name} drives self`,
+      color: kidLook(child).text,
+    })),
+    { id: NO_RIDE, label: 'No ride needed', color: muted },
+  ];
 }
 
 export function ChoiceRow({
