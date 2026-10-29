@@ -3,12 +3,14 @@ package expo.modules.scheduleparser
 import android.net.Uri
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
+import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,9 +53,39 @@ class ScheduleParserModule : Module() {
     val image = InputImage.fromFilePath(context, uri)
     val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     return try {
-      Tasks.await(recognizer.process(image)).text ?: ""
+      rowsFromVision(Tasks.await(recognizer.process(image)))
     } finally {
       recognizer.close()
+    }
+  }
+
+  private fun rowsFromVision(vision: Text): String {
+    data class Piece(val text: String, val centerY: Float, val left: Int, val height: Int)
+    val pieces = ArrayList<Piece>()
+    for (block in vision.textBlocks) {
+      for (line in block.lines) {
+        val box = line.boundingBox ?: continue
+        val value = line.text.trim()
+        if (value.isEmpty()) continue
+        pieces.add(Piece(value, box.exactCenterY(), box.left, box.height().coerceAtLeast(1)))
+      }
+    }
+    if (pieces.isEmpty()) return ""
+    pieces.sortBy { it.centerY }
+    val rows = ArrayList<ArrayList<Piece>>()
+    for (piece in pieces) {
+      val row = rows.lastOrNull()
+      if (row == null) {
+        rows.add(arrayListOf(piece))
+        continue
+      }
+      val averageY = row.sumOf { it.centerY.toDouble() } / row.size
+      val averageH = row.sumOf { it.height.toDouble() } / row.size
+      if (abs(piece.centerY.toDouble() - averageY) <= 0.6 * averageH) row.add(piece)
+      else rows.add(arrayListOf(piece))
+    }
+    return rows.joinToString("\n") { row ->
+      row.sortedBy { it.left }.joinToString(" | ") { it.text }
     }
   }
 

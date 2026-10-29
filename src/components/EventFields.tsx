@@ -13,6 +13,7 @@ export type EventDraftFields = {
   childIds: string[];
   caregiverId: string;
   icon: string;
+  timeTbd?: boolean;
 };
 
 export function EventFields({
@@ -49,27 +50,45 @@ export function EventFields({
         label="Start"
         value={value.start}
         mode="time"
+        blankLabel={value.timeTbd ? 'Time TBD' : undefined}
         open={picker === 'start'}
         onOpen={() => setPicker('start')}
         onClose={() => setPicker(null)}
         onChange={(picked) => {
           const nextStart = applyTime(value.start, picked);
+          if (value.timeTbd) {
+            onChange({ ...value, start: nextStart, end: new Date(nextStart.getTime() + 60 * 60 * 1000), timeTbd: false });
+            return;
+          }
           const previous = Number.isNaN(value.start.getTime()) ? nextStart.getTime() : value.start.getTime();
           const delta = nextStart.getTime() - previous;
           const nextEnd = Number.isNaN(value.end.getTime())
             ? new Date(nextStart.getTime() + 60 * 60 * 1000)
             : new Date(value.end.getTime() + delta);
-          onChange({ ...value, start: nextStart, end: nextEnd });
+          onChange({ ...value, start: nextStart, end: nextEnd, timeTbd: false });
         }}
       />
       <DateField
         label="End"
         value={value.end}
         mode="time"
+        blankLabel={value.timeTbd ? 'Time TBD' : undefined}
         open={picker === 'end'}
         onOpen={() => setPicker('end')}
         onClose={() => setPicker(null)}
-        onChange={(picked) => onChange({ ...value, end: applyTime(value.end, picked) })}
+        onChange={(picked) => {
+          const nextEnd = applyTime(value.end, picked);
+          if (value.timeTbd) {
+            onChange({
+              ...value,
+              start: new Date(nextEnd.getTime() - 60 * 60 * 1000),
+              end: nextEnd,
+              timeTbd: false,
+            });
+            return;
+          }
+          onChange({ ...value, end: nextEnd, timeTbd: false });
+        }}
       />
       <TextInput
         value={value.location}
@@ -139,6 +158,7 @@ function DateField({
   value,
   mode,
   open,
+  blankLabel,
   onOpen,
   onClose,
   onChange,
@@ -147,17 +167,20 @@ function DateField({
   value: Date;
   mode: 'date' | 'time';
   open: boolean;
+  blankLabel?: string;
   onOpen: () => void;
   onClose: () => void;
   onChange: (picked: Date) => void;
 }) {
   const invalid = Number.isNaN(value.getTime());
   const shown = invalid ? new Date() : value;
-  const text = invalid
-    ? 'Not a date'
-    : mode === 'date'
-      ? shown.toLocaleDateString()
-      : shown.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const text = blankLabel
+    ? blankLabel
+    : invalid
+      ? 'Not a date'
+      : mode === 'date'
+        ? shown.toLocaleDateString()
+        : shown.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return (
     <View>
       <Text style={styles.label}>{label}</Text>

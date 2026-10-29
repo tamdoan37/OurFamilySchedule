@@ -1,10 +1,12 @@
-import { useRef, useState } from 'react';
-import { View, Text, TextInput, StyleSheet, Button, Alert, ScrollView, Pressable } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { View, Text, TextInput, StyleSheet, Button, Alert, ScrollView, Pressable, AppState, Linking } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import QRCode from 'qrcode';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { isRelayUrl, suggestedRelayUrl } from '../src/sync/pairing';
 import { eraseLocalFamily, useScheduleStore } from '../src/store/scheduleStore';
 import { loadSyncEngine, syncSupported } from '../src/sync/loadSync';
+import { refreshReminders } from '../src/notifications/reminders';
 
 export default function SettingsScreen() {
   const paired = useScheduleStore((state) => state.paired);
@@ -184,8 +186,60 @@ function ReminderChoices() {
         selected={leads[1]}
         onPick={(minutes) => setReminderLeads(leads[0], minutes)}
       />
+      <ReminderPermission />
     </>
   );
+}
+
+function ReminderPermission() {
+  const [granted, setGranted] = useState<boolean | null>(null);
+  const grantedRef = useRef<boolean | null>(null);
+
+  async function refresh() {
+    const current = await Notifications.getPermissionsAsync();
+    const ok = current.granted === true;
+    if (ok && grantedRef.current === false) {
+      void refreshReminders();
+      if (syncSupported()) loadSyncEngine()?.syncNow();
+    }
+    grantedRef.current = ok;
+    setGranted(ok);
+  }
+
+  useEffect(() => {
+    void refresh();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refresh();
+    });
+    return () => subscription.remove();
+  }, []);
+
+  if (granted !== false) return null;
+
+  async function turnOn() {
+    const current = await Notifications.getPermissionsAsync();
+    if (current.granted) {
+      grantedRef.current = true;
+      setGranted(true);
+      void refreshReminders();
+      if (syncSupported()) loadSyncEngine()?.syncNow();
+      return;
+    }
+    if (current.canAskAgain) {
+      const next = await Notifications.requestPermissionsAsync();
+      const ok = next.granted === true;
+      grantedRef.current = ok;
+      setGranted(ok);
+      if (ok) {
+        void refreshReminders();
+        if (syncSupported()) loadSyncEngine()?.syncNow();
+      }
+      return;
+    }
+    await Linking.openSettings();
+  }
+
+  return <Button title="Turn on reminders" onPress={() => void turnOn()} />;
 }
 
 function LeadRow({ label, selected, onPick }: { label: string; selected: number; onPick: (minutes: number) => void }) {

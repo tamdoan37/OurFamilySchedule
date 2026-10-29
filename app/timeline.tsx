@@ -281,7 +281,7 @@ function EventCard({
       ]}
     >
       <Text style={styles.eventTitle}>{event.icon ? `${event.icon} ` : ''}{event.title}</Text>
-      <Text>{timeRange(event.startTime, event.endTime)}</Text>
+      <Text>{timeRange(event.startTime, event.endTime, event.timeTbd)}</Text>
       {event.location ? <Text>{event.location}</Text> : null}
       {names.length > 0 && <Text>{names.join(', ')}</Text>}
       {event.notes ? <Text>{event.notes}</Text> : null}
@@ -433,7 +433,8 @@ function dayHeading(date: Date, now: Date): string {
   return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-function timeRange(startIso: string, endIso: string): string {
+function timeRange(startIso: string, endIso: string, timeTbd = false): string {
+  if (timeTbd) return 'Time TBD';
   const start = new Date(startIso);
   const end = new Date(endIso);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'Time not set';

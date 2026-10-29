@@ -4,6 +4,7 @@ import Constants from 'expo-constants';
 
 const STORE_KEY = 'ofs.pairing';
 const TOKEN_LABEL = 'our-family-schedule-room-v1';
+const KEYCHAIN = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK };
 
 export type Pairing = {
   familyKey: string;
@@ -12,17 +13,49 @@ export type Pairing = {
 };
 
 export async function readPairing(): Promise<Pairing | null> {
-  const raw = await SecureStore.getItemAsync(STORE_KEY);
+  let raw: string | null = null;
+  try {
+    raw = await SecureStore.getItemAsync(STORE_KEY, KEYCHAIN);
+  } catch {
+    raw = null;
+  }
+  if (!raw) {
+    try {
+      raw = await SecureStore.getItemAsync(STORE_KEY);
+    } catch {
+      raw = null;
+    }
+  }
   if (!raw) return null;
-  return decodePairing(raw);
+  const pairing = decodePairing(raw);
+  if (!pairing) return null;
+  try {
+    await writePairing(pairing);
+  } catch {
+    // The phone can still sync if the keychain will not accept a rewrite yet.
+  }
+  return pairing;
 }
 
 export async function writePairing(pairing: Pairing): Promise<void> {
-  await SecureStore.setItemAsync(STORE_KEY, JSON.stringify({ v: 1, relay: pairing.relayUrl, room: pairing.roomId, key: pairing.familyKey }));
+  await SecureStore.setItemAsync(
+    STORE_KEY,
+    JSON.stringify({ v: 1, relay: pairing.relayUrl, room: pairing.roomId, key: pairing.familyKey }),
+    KEYCHAIN,
+  );
 }
 
 export async function clearPairing(): Promise<void> {
-  await SecureStore.deleteItemAsync(STORE_KEY);
+  try {
+    await SecureStore.deleteItemAsync(STORE_KEY, KEYCHAIN);
+  } catch {
+    // The value may still be stored under the previous accessibility class.
+  }
+  try {
+    await SecureStore.deleteItemAsync(STORE_KEY);
+  } catch {
+    // Already removed, or it was only stored with the new setting.
+  }
 }
 
 export function encodePairing(pairing: Pairing): string {

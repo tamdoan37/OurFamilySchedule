@@ -14,6 +14,7 @@ export interface AppEvent {
   deleted: boolean;
   lastEditedBy: string;
   lastEditedAt: string;
+  timeTbd: boolean;
 }
 
 export interface Caregiver {
@@ -35,6 +36,9 @@ export interface DraftEvent {
   location: string;
   confidence: number;
   rawText: string;
+  timeTbd?: boolean;
+  repeat?: 'weekly';
+  seriesUntil?: string;
 }
 
 export interface EncryptedPayload {
@@ -56,4 +60,5 @@ export type EventField =
   | 'icon'
   | 'scanId'
   | 'calendarEventId'
-  | 'deleted';
+  | 'deleted'
+  | 'timeTbd';

@@ -39,7 +39,7 @@ npm start
 Production must use https://. A local http:// relay is only for a private test.
 Behind a reverse proxy, start the relay with `TRUST_PROXY=1` so the new-room limit uses the last `X-Forwarded-For` address for both HTTP and socket connections. Leave it unset otherwise. Clients can put a fake address first, so the relay trusts the last hop only.
 
-Wake-up pushes are silent (`data.kind` is `sync`, with no title, body, or sound). iOS delivers background pushes on a best-effort basis, so opening the app still catches up and reschedules reminders.
+Wake-up pushes are silent (`data.kind` is `sync`, with no title, body, or sound). A device gets at most one of these every 5 minutes; if more changes arrive inside that window, one trailing silent push is sent when the window ends. iOS delivers background pushes on a best-effort basis, so opening the app still catches up and reschedules reminders.
 
 ## Demo Flow
 1. Open the app → tap **Load Demo Events**.

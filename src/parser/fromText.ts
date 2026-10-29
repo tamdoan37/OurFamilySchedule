@@ -2,15 +2,20 @@ import * as chrono from 'chrono-node';
 
 const TIMED_CONFIDENCE = 0.62;
 const LOW_CONFIDENCE = 0.35;
-const MONTH_WORD_RE = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/i;
+const PAST_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
+const MONTH_NAME_RE = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i;
+const WEEKDAY_RE = /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues|tue|wed|thurs|thur|thu|fri|sat)\b/i;
+const EVERY_RE = /\bevery\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues|tue|wed|thurs|thur|thu|fri|sat)\b/i;
 const SLASH_DATE_RE = /\b\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?\b/;
 const FULL_HYPHEN_DATE_RE = /\b\d{1,2}-\d{1,2}-\d{2,4}\b/;
 const CLOCK_RE = /\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b|\b\d{1,2}:\d{2}\b/i;
 const TBD_RE = /\b(?:tbd|tba)\b/i;
 const TIME_RE = new RegExp(`${TBD_RE.source}|${CLOCK_RE.source}`, 'i');
 const YEAR_RE = /\b(?:19|20)\d{2}\b/;
-const PLACE_RE = /^(.*?)\s+((?:field|park|gym|court|studio|clinic|room|rink|pool|hall|center|centre)\b.*)$/i;
-const AT_RE = /^(.*?)\s+(?:@|at)\s+(.+)$/i;
+const SEASON_RE = /\bseason\s+runs\b/i;
+const PLACE_WORD = /^(?:fields|field|parks|park|gyms|gym|courts|court|studios|studio|clinics|clinic|rooms|room|rinks|rink|pools|pool|halls|hall|centers|center|centres|centre)$/i;
+const DANGLING = /^(?:is|are|at|on|the|a|an|vs|v|to|for|with|from|and|or|of|in|by|every)$/i;
+const SMALL = new Set(['vs', 'v', 'the', 'a', 'an', 'at', 'on', 'is', 'to', 'for', 'and', 'or', 'of', 'in', 'by', 'from']);
 const STOP = new Set(['the', 'and', 'for', 'with', 'from', 'vs', 'game']);
 
 export type TextDraft = {
@@ -20,20 +25,42 @@ export type TextDraft = {
   location: string;
   confidence: number;
   rawText: string;
+  timeTbd: boolean;
+  repeat?: 'weekly';
+  seriesUntil?: string;
 };
 
 export function draftsFromRecognizedText(text: string, now = new Date()): TextDraft[] {
   const seen = new Set<string>();
   const drafts: TextDraft[] = [];
-  for (const row of groupRows(text, now)) {
+  for (const row of layoutRows(text)) {
     const draft = draftFromRow(row, now);
     if (!draft) continue;
-    const key = `${draft.title.toLowerCase()}|${draft.start.slice(0, 16)}`;
+    const key = `${draft.title.toLowerCase()}|${draft.start.slice(0, 16)}|${draft.repeat ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     drafts.push(draft);
   }
   return drafts;
+}
+
+export function defaultSeriesEnd(start: Date): Date {
+  const end = new Date(start);
+  end.setDate(end.getDate() + 8 * 7);
+  return end;
+}
+
+export function weeklyDates(start: Date, until: Date): Date[] {
+  const dates: Date[] = [];
+  const end = new Date(until);
+  end.setHours(23, 59, 59, 999);
+  const cursor = new Date(start);
+  if (end.getTime() < cursor.getTime()) return [new Date(start)];
+  for (let guard = 0; cursor.getTime() <= end.getTime() && guard < 52; guard += 1) {
+    dates.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return dates.length > 0 ? dates : [new Date(start)];
 }
 
 export function parseModelEvents(eventsJson: string): unknown {
@@ -54,18 +81,16 @@ export function groundModelDrafts(ocr: string, raw: unknown, now: Date): TextDra
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
     const record = item as Record<string, unknown>;
-    const title = typeof record.title === 'string' ? tidy(record.title) : '';
+    const title = typeof record.title === 'string' ? tidyTitle(record.title) : '';
     if (!titleGrounded(title, hay)) continue;
     const rawText = typeof record.rawText === 'string' && record.rawText.trim() ? record.rawText.trim() : title;
     const source = `${rawText}\n${title}`;
+    if (SEASON_RE.test(source) || monthWithoutDay(source)) continue;
     let start = parseWhen(typeof record.start === 'string' ? record.start : '', source, now);
     if (!start) continue;
-    if (!YEAR_RE.test(source)) start = upcoming(start, false, now);
     const low = isLowTime(source);
-    if (low) {
-      start = new Date(start);
-      start.setHours(0, 0, 0, 0);
-    }
+    start = placeOnCalendar(start.getMonth(), start.getDate(), low ? 12 : start.getHours(), low ? 0 : start.getMinutes(), source, now) ?? start;
+    if (low) start.setHours(12, 0, 0, 0);
     let end = parseWhen(typeof record.end === 'string' ? record.end : '', source, now);
     if (low || !end || end.getTime() <= start.getTime()) end = new Date(start.getTime() + 60 * 60 * 1000);
     let confidence = typeof record.confidence === 'number' && Number.isFinite(record.confidence)
@@ -73,6 +98,7 @@ export function groundModelDrafts(ocr: string, raw: unknown, now: Date): TextDra
       : 0.9;
     if (low) confidence = LOW_CONFIDENCE;
     const location = typeof record.location === 'string' ? groundedLocation(record.location, hay) : '';
+    const weekly = EVERY_RE.test(source);
     drafts.push({
       title,
       start: offsetISO(start),
@@ -80,6 +106,9 @@ export function groundModelDrafts(ocr: string, raw: unknown, now: Date): TextDra
       location,
       confidence,
       rawText,
+      timeTbd: low,
+      repeat: weekly ? 'weekly' : undefined,
+      seriesUntil: weekly ? offsetISO(defaultSeriesEnd(start)) : undefined,
     });
   }
   return drafts;
@@ -92,45 +121,95 @@ export function offsetISO(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
 }
 
-function groupRows(text: string, now: Date): string[] {
+function layoutRows(text: string): string[] {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return zipColumns(lines) ?? groupRows(lines);
+}
+
+function zipColumns(lines: string[]): string[] | null {
+  if (lines.length < 4) return null;
+  const groups: string[][] = [];
+  for (const line of lines) {
+    const kind = lineKind(line);
+    const last = groups[groups.length - 1];
+    if (last && lineKind(last[0]) === kind) last.push(line);
+    else groups.push([line]);
+  }
+  const dateGroup = groups.find((group) => group.length >= 2 && lineKind(group[0]) === 'date');
+  if (!dateGroup) return null;
+  const width = dateGroup.length;
+  if (!groups.some((group) => group !== dateGroup && group.length === width)) return null;
+  const rows: string[] = [];
+  for (let index = 0; index < width; index += 1) {
+    rows.push(groups.filter((group) => group.length === width).map((group) => group[index]).join(' | '));
+  }
+  return rows;
+}
+
+function lineKind(line: string): 'date' | 'time' | 'place' | 'text' {
+  if (hasSpecificDay(line) && !CLOCK_RE.test(line)) return 'date';
+  if ((CLOCK_RE.test(line) || TBD_RE.test(line)) && !hasSpecificDay(line)) return 'time';
+  if (looksLikePlace(line) && !hasSpecificDay(line)) return 'place';
+  if (hasSpecificDay(line)) return 'date';
+  return 'text';
+}
+
+function groupRows(lines: string[]): string[] {
   const rows: string[][] = [];
   let current: string[] | null = null;
   let carryDate = '';
   for (const line of lines) {
     const dated = hasDate(line);
     const timed = TIME_RE.test(line);
-    if (dated) {
-      const snippet = dateSnippet(line, now);
-      if (snippet) carryDate = snippet;
+    const every = EVERY_RE.test(line);
+    const season = SEASON_RE.test(line);
+    if (dated && !season) {
+      const snippet = dateSnippet(line);
+      if (snippet && hasSpecificDay(snippet)) carryDate = snippet;
     }
-    const starts = dated || (timed && (!current || current.some((item) => TIME_RE.test(item))));
+    const starts = every || season || dated || (timed && (!current || current.some((item) => TIME_RE.test(item))));
     if (!starts) {
-      if (current && (needsTitle(current) || looksLikePlace(line))) current.push(line);
+      if (current && !SEASON_RE.test(current.join(' ')) && (needsTitle(current) || looksLikePlace(line))) current.push(line);
+      else if (timed || every || dated) {
+        if (current) rows.push(current);
+        current = !dated && timed && carryDate ? [carryDate, line] : [line];
+      }
       continue;
     }
     if (current) rows.push(current);
-    current = !dated && timed && carryDate ? [carryDate, line] : [line];
+    current = !dated && timed && carryDate && !every ? [carryDate, line] : [line];
   }
   if (current) rows.push(current);
   return rows.map((row) => row.join('\n'));
 }
 
 function hasDate(line: string): boolean {
-  if (MONTH_WORD_RE.test(line) || SLASH_DATE_RE.test(line) || FULL_HYPHEN_DATE_RE.test(line)) return true;
+  if (MONTH_NAME_RE.test(line) || SLASH_DATE_RE.test(line) || FULL_HYPHEN_DATE_RE.test(line)) return true;
   if (!/\b\d{1,2}-\d{1,2}\b/.test(line)) return false;
   if (/:/.test(line) || /(?:a\.?m\.?|p\.?m\.?)/i.test(line)) return false;
   return true;
+}
+
+function hasSpecificDay(row: string): boolean {
+  if (SLASH_DATE_RE.test(row) || FULL_HYPHEN_DATE_RE.test(row)) return true;
+  if (!MONTH_NAME_RE.test(row)) return false;
+  return /\b(?:[1-9]|[12]\d|3[01])\b/.test(row.replace(YEAR_RE, ' '));
+}
+
+function monthWithoutDay(row: string): boolean {
+  if (EVERY_RE.test(row) || SLASH_DATE_RE.test(row) || FULL_HYPHEN_DATE_RE.test(row)) return false;
+  if (!MONTH_NAME_RE.test(row)) return false;
+  return !/\b(?:[1-9]|[12]\d|3[01])\b/.test(row.replace(YEAR_RE, ' '));
 }
 
 function needsTitle(row: string[]): boolean {
   const leftover = row.join(' ')
     .replace(CLOCK_RE, ' ')
     .replace(TBD_RE, ' ')
-    .replace(MONTH_WORD_RE, ' ')
+    .replace(MONTH_NAME_RE, ' ')
+    .replace(WEEKDAY_RE, ' ')
     .replace(SLASH_DATE_RE, ' ')
     .replace(FULL_HYPHEN_DATE_RE, ' ')
-    .replace(/\b\d{1,2}-\d{1,2}\b/g, ' ')
     .replace(/\b(?:19|20)\d{2}\b/g, ' ')
     .replace(/[^a-z0-9]+/gi, ' ')
     .trim();
@@ -138,48 +217,161 @@ function needsTitle(row: string[]): boolean {
 }
 
 function looksLikePlace(line: string): boolean {
-  return /\b(?:field|park|gym|court|studio|clinic|room|rink|pool|hall|center|centre)\b/i.test(line);
+  return line.split(/\s+/).some((token) => PLACE_WORD.test(token.replace(/[^A-Za-z]/g, '')));
 }
 
-function dateSnippet(line: string, now: Date): string {
-  const dated = chrono.parse(line, now, { forwardDate: true }).find((result) => hasDay(result));
+function dateSnippet(line: string): string {
+  const dated = chrono.parse(line, new Date(), { forwardDate: false }).find((result) => isRealDateText(result.text));
   if (!dated) return '';
   return tidy(dated.text.replace(CLOCK_RE, ' ').replace(TBD_RE, ' '));
 }
 
 function draftFromRow(row: string, now: Date): TextDraft | null {
-  const results = chrono.parse(row, now, { forwardDate: true });
-  const chosen = results.find((result) => hasDay(result));
+  if (SEASON_RE.test(row) || monthWithoutDay(row)) return null;
+  if (EVERY_RE.test(row)) return weeklyDraft(row, now);
+  const results = chrono.parse(row, now, { forwardDate: false });
+  const chosen = chooseDate(results);
   if (!chosen) return null;
-  let start = upcoming(chosen.start.date(), YEAR_RE.test(row), now);
-  const missingTime = isLowTime(row) || !chosen.start.isCertain('hour');
-  if (missingTime) {
-    start = new Date(start);
-    start.setHours(0, 0, 0, 0);
-  }
+  const parsed = chosen.start.date();
+  const timeTbd = isLowTime(row);
+  const clock = timeTbd ? null : clockOn(results, chosen);
+  const hour = clock ? clock.hour : 12;
+  const minute = clock ? clock.minute : 0;
+  const placed = placeOnCalendar(parsed.getMonth(), parsed.getDate(), hour, minute, row, now);
+  if (!placed) return null;
+  const start = new Date(placed);
+  if (timeTbd) start.setHours(12, 0, 0, 0);
   let end = new Date(start.getTime() + 60 * 60 * 1000);
-  if (!missingTime) {
+  if (!timeTbd) {
     const ranged = rangeEnd(row, start);
-    if (ranged) {
-      end = ranged;
-    } else {
-      const later = results.find((result) => result !== chosen && result.start.isCertain('hour') && CLOCK_RE.test(result.text));
-      if (later) {
-        const endDate = combineEnd(start, later);
-        if (endDate.getTime() > start.getTime()) end = endDate;
-      }
-    }
+    if (ranged) end = ranged;
   }
-  const { title, location } = splitTitleAndLocation(stripSpans(row, results));
+  const { title, location } = splitTitleAndLocation(stripSpans(row, results.filter((result) => isRealDateText(result.text))));
   if (!title) return null;
   return {
     title,
     start: offsetISO(start),
     end: offsetISO(end),
     location,
-    confidence: missingTime ? LOW_CONFIDENCE : TIMED_CONFIDENCE,
+    confidence: timeTbd ? LOW_CONFIDENCE : TIMED_CONFIDENCE,
     rawText: row.replace(/\s+/g, ' ').trim(),
+    timeTbd,
   };
+}
+
+function weeklyDraft(row: string, now: Date): TextDraft | null {
+  const match = row.match(EVERY_RE);
+  const weekday = match ? weekdayIndex(match[1]) : null;
+  if (weekday == null) return null;
+  const results = chrono.parse(row, now, { forwardDate: true });
+  const timeTbd = isLowTime(row);
+  const timed = results.find((result) => result.start.isCertain('hour'));
+  const hour = !timeTbd && timed?.start.get('hour') != null ? timed.start.get('hour') as number : 12;
+  const minute = !timeTbd && timed ? timed.start.get('minute') ?? 0 : 0;
+  const start = nextWeekday(weekday, hour, minute, now);
+  if (timeTbd) start.setHours(12, 0, 0, 0);
+  let end = new Date(start.getTime() + 60 * 60 * 1000);
+  if (!timeTbd) {
+    const ranged = rangeEnd(row, start);
+    if (ranged) end = ranged;
+  }
+  const parts = splitTitleAndLocation(stripSpans(row, results));
+  if (!parts.title) return null;
+  return {
+    title: parts.title,
+    start: offsetISO(start),
+    end: offsetISO(end),
+    location: parts.location,
+    confidence: timeTbd ? LOW_CONFIDENCE : TIMED_CONFIDENCE,
+    rawText: row.replace(/\s+/g, ' ').trim(),
+    timeTbd,
+    repeat: 'weekly',
+    seriesUntil: offsetISO(defaultSeriesEnd(start)),
+  };
+}
+
+function clockOn(results: chrono.ParsedResult[], chosen: chrono.ParsedResult): { hour: number; minute: number } | null {
+  const timed = results.find((result) => result.start.isCertain('hour') && CLOCK_RE.test(result.text));
+  const picked = timed ?? (chosen.start.isCertain('hour') && CLOCK_RE.test(chosen.text) ? chosen : undefined);
+  if (!picked) return null;
+  const hour = picked.start.get('hour');
+  if (hour == null) return null;
+  return { hour, minute: picked.start.get('minute') ?? 0 };
+}
+
+function nextWeekday(weekday: number, hour: number, minute: number, now: Date): Date {
+  const start = new Date(now);
+  start.setHours(hour, minute, 0, 0);
+  const delta = (weekday - start.getDay() + 7) % 7;
+  start.setDate(start.getDate() + delta);
+  if (start.getTime() <= now.getTime()) start.setDate(start.getDate() + 7);
+  return start;
+}
+
+function placeOnCalendar(month: number, day: number, hour: number, minute: number, row: string, now: Date): Date | null {
+  const explicit = row.match(YEAR_RE);
+  if (explicit) {
+    const dated = new Date(Number(explicit[0]), month, day, hour, minute, 0, 0);
+    return dated.getMonth() === month ? dated : null;
+  }
+  const weekday = hasSpecificDay(row) ? namedWeekday(row) : null;
+  if (weekday != null) {
+    let best: Date | null = null;
+    let bestDistance = Infinity;
+    for (let year = now.getFullYear() - 1; year <= now.getFullYear() + 8; year += 1) {
+      const candidate = new Date(year, month, day, hour, minute, 0, 0);
+      if (candidate.getMonth() !== month || candidate.getDate() !== day || candidate.getDay() !== weekday) continue;
+      const distance = Math.abs(candidate.getTime() - now.getTime());
+      const prefer = distance < bestDistance || (distance === bestDistance && best != null && candidate.getTime() > best.getTime());
+      if (best == null || prefer) {
+        best = candidate;
+        bestDistance = distance;
+      }
+    }
+    if (best) return best;
+  }
+  const thisYear = new Date(now.getFullYear(), month, day, hour, minute, 0, 0);
+  if (thisYear.getMonth() !== month) return null;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const eventDay = new Date(thisYear.getFullYear(), thisYear.getMonth(), thisYear.getDate());
+  if (eventDay.getTime() >= today.getTime() - PAST_WINDOW_MS) return thisYear;
+  return new Date(now.getFullYear() + 1, month, day, hour, minute, 0, 0);
+}
+
+function namedWeekday(text: string): number | null {
+  const match = text.match(WEEKDAY_RE);
+  if (!match) return null;
+  return weekdayIndex(match[1]);
+}
+
+function weekdayIndex(word: string): number | null {
+  const name = word.toLowerCase();
+  if (name.startsWith('su')) return 0;
+  if (name.startsWith('mo')) return 1;
+  if (name.startsWith('tu')) return 2;
+  if (name.startsWith('we')) return 3;
+  if (name.startsWith('th')) return 4;
+  if (name.startsWith('fr')) return 5;
+  if (name.startsWith('sa')) return 6;
+  return null;
+}
+
+function isRealDateText(text: string): boolean {
+  return MONTH_NAME_RE.test(text) || SLASH_DATE_RE.test(text) || FULL_HYPHEN_DATE_RE.test(text);
+}
+
+function chooseDate(results: chrono.ParsedResult[]): chrono.ParsedResult | null {
+  const real = results.filter((result) => isRealDateText(result.text) && result.start.isCertain('day'));
+  if (real.length === 0) return null;
+  return real.reduce((best, result) => (dateScore(result) > dateScore(best) ? result : best));
+}
+
+function dateScore(result: chrono.ParsedResult): number {
+  let score = 0;
+  if (MONTH_NAME_RE.test(result.text)) score += 4;
+  if (SLASH_DATE_RE.test(result.text) || FULL_HYPHEN_DATE_RE.test(result.text)) score += 4;
+  if (WEEKDAY_RE.test(result.text)) score += 1;
+  return score + Math.min(result.text.length, 80) / 1000;
 }
 
 function rangeEnd(row: string, start: Date): Date | null {
@@ -198,21 +390,6 @@ function rangeEnd(row: string, start: Date): Date | null {
   return end.getTime() > start.getTime() ? end : null;
 }
 
-function combineEnd(start: Date, result: chrono.ParsedResult): Date {
-  const hour = result.start.get('hour');
-  const minute = result.start.get('minute') ?? 0;
-  if (hour == null) return new Date(start.getTime() + 60 * 60 * 1000);
-  if (!result.start.isCertain('day') && !result.start.isCertain('month')) {
-    const end = new Date(start);
-    end.setHours(hour, minute, 0, 0);
-    if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
-    return end;
-  }
-  const dated = result.start.date();
-  dated.setHours(hour, minute, 0, 0);
-  return dated;
-}
-
 function stripSpans(row: string, results: chrono.ParsedResult[]): string {
   const spans = results
     .map((result) => ({ index: result.index, length: result.text.length }))
@@ -221,36 +398,44 @@ function stripSpans(row: string, results: chrono.ParsedResult[]): string {
   for (const span of spans) {
     text = `${text.slice(0, span.index)} ${text.slice(span.index + span.length)}`;
   }
-  return tidy(text.replace(TBD_RE, ' ').replace(/[|•·]+/g, ' '));
+  return tidy(text.replace(TBD_RE, ' ').replace(new RegExp(CLOCK_RE.source, 'gi'), ' ').replace(EVERY_RE, ' ').replace(/[|•·]+/g, ' '));
 }
 
 function splitTitleAndLocation(text: string): { title: string; location: string } {
   const cleaned = tidy(text);
   if (!cleaned) return { title: '', location: '' };
-  const at = cleaned.match(AT_RE);
-  if (at?.[1] && at[2] && !/^(?:a|an|the)$/i.test(at[1].trim())) {
-    return { title: tidy(at[1]), location: tidy(at[2]) };
+  const tokens = cleaned.split(' ');
+  const placeIndex = tokens.findIndex((token) => PLACE_WORD.test(token.replace(/[^A-Za-z]/g, '')));
+  if (placeIndex >= 0) {
+    let start = placeIndex;
+    while (start > 0 && isCapitalized(tokens[start - 1]) && !isOpponentToken(tokens, start - 1)) {
+      if (!hasContentWord(tokens.slice(0, start - 1).join(' '))) break;
+      start -= 1;
+    }
+    const title = tidyTitle(tokens.slice(0, start).join(' '));
+    if (title) return { title, location: tidy(tokens.slice(start).join(' ')) };
   }
-  const place = cleaned.match(PLACE_RE);
-  if (place?.[1] && place[2]) return { title: tidy(place[1]), location: tidy(place[2]) };
-  return { title: cleaned, location: '' };
+  const at = cleaned.match(/^(.*?)\s+(?:@|at)\s+(.+)$/i);
+  if (at?.[1] && at[2] && hasContentWord(at[1]) && !CLOCK_RE.test(at[2])) {
+    return { title: tidyTitle(at[1]), location: tidy(at[2]) };
+  }
+  return { title: tidyTitle(cleaned), location: '' };
 }
 
-function hasDay(result: chrono.ParsedResult): boolean {
-  return result.start.isCertain('day') || result.start.isCertain('weekday') || result.start.isCertain('month');
+function isCapitalized(token: string): boolean {
+  const letters = token.replace(/[^A-Za-z]/g, '');
+  if (!letters) return false;
+  return letters[0] === letters[0].toUpperCase() && letters[0] !== letters[0].toLowerCase();
 }
 
-function upcoming(date: Date, certainYear: boolean, now: Date): Date {
-  const next = new Date(date.getTime());
-  if (certainYear) return next;
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  let guard = 0;
-  while (next.getTime() < startOfToday.getTime() && guard < 3) {
-    next.setFullYear(next.getFullYear() + 1);
-    guard += 1;
-  }
-  return next;
+function isOpponentToken(tokens: string[], index: number): boolean {
+  const previous = (tokens[index - 1] || '').replace(/\./g, '').toLowerCase();
+  return previous === 'vs' || previous === 'v' || previous === 'versus';
+}
+
+function hasContentWord(text: string): boolean {
+  const words = text.toLowerCase().match(/[a-z0-9]{2,}/g) ?? [];
+  return words.some((word) => !SMALL.has(word));
 }
 
 function isLowTime(source: string): boolean {
@@ -261,10 +446,8 @@ function parseWhen(value: string, source: string, now: Date): Date | null {
   if (value) {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) return parsed;
-    const fromValue = chrono.parse(value, now, { forwardDate: true })[0];
-    if (fromValue) return fromValue.start.date();
   }
-  const fromSource = chrono.parse(source, now, { forwardDate: true }).find((result) => hasDay(result));
+  const fromSource = chrono.parse(source, now, { forwardDate: false }).find((result) => isRealDateText(result.text) && result.start.isCertain('day'));
   return fromSource ? fromSource.start.date() : null;
 }
 
@@ -286,4 +469,18 @@ function groundedLocation(location: string, hay: string): string {
 
 function tidy(value: string): string {
   return value.replace(/\s+/g, ' ').replace(/^[\s,;:\-–—|]+|[\s,;:\-–—|]+$/g, '').trim();
+}
+
+function tidyTitle(value: string): string {
+  const tokens = tidy(value).split(' ').filter(Boolean);
+  while (tokens.length > 0) {
+    const last = tokens[tokens.length - 1].replace(/^[.,;:\-–—|]+|[.,;:\-–—|]+$/g, '');
+    if (!last || DANGLING.test(last)) {
+      tokens.pop();
+      continue;
+    }
+    tokens[tokens.length - 1] = last;
+    break;
+  }
+  return tokens.join(' ').trim();
 }

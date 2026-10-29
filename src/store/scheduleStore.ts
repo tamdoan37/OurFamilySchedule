@@ -51,6 +51,7 @@ type NewEvent = {
   icon?: string;
   scanId?: string;
   calendarEventId?: string;
+  timeTbd?: boolean;
 };
 
 type EventPatch = Partial<{
@@ -66,6 +67,7 @@ type EventPatch = Partial<{
   scanId: string;
   calendarEventId: string;
   deleted: boolean;
+  timeTbd: boolean;
 }>;
 
 const ydocHolder: { current: Y.Doc } = { current: new Y.Doc() };
@@ -333,6 +335,7 @@ function readEvents(): AppEvent[] {
       deleted: false,
       lastEditedBy: String(map.get('lastEditedBy') ?? ''),
       lastEditedAt: String(map.get('lastEditedAt') ?? ''),
+      timeTbd: map.get('timeTbd') === true,
     });
   });
   return rows.sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
@@ -378,6 +381,7 @@ function writeEvent(input: NewEvent & { id: string }) {
   map.set('scanId', input.scanId ?? '');
   map.set('calendarEventId', input.calendarEventId ?? '');
   map.set('deleted', false);
+  map.set('timeTbd', input.timeTbd === true);
   writeChildIds(map, input.childIds ?? []);
   stamp(map);
   eventsMap().set(input.id, map);

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { View, Text, Image, StyleSheet, Button, Alert, ScrollView, Pressable, Switch, Platform } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -8,6 +9,7 @@ import * as Crypto from 'expo-crypto';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { useScheduleStore, toOffsetISO } from '../store/scheduleStore';
 import { parseScheduleFromPhoto } from '../parser/parseSchedule';
+import { weeklyDates } from '../parser/fromText';
 import { draftProblems, findDuplicateId } from '../parser/reviewDrafts';
 import { DraftEvent } from '../types';
 import { ChoiceRow, EventDraftFields, EventFields, IconField } from '../components/EventFields';
@@ -28,6 +30,9 @@ type ReviewRow = {
   customIcon: boolean;
   duplicateId: string;
   action: 'save' | 'skip' | 'update';
+  timeTbd: boolean;
+  repeat?: 'weekly';
+  seriesUntil: Date | null;
 };
 
 export default function CaptureScreen() {
@@ -51,6 +56,7 @@ export default function CaptureScreen() {
   const [androidCalendarId, setAndroidCalendarId] = useState('');
   const [saving, setSaving] = useState(false);
   const [reading, setReading] = useState(false);
+  const [untilKey, setUntilKey] = useState<string | null>(null);
 
   async function openPhoto(uri: string) {
     setReading(true);
@@ -193,44 +199,34 @@ export default function CaptureScreen() {
       }
       let calendarFailed = false;
       for (const row of pending) {
-        let calendarEventId = '';
-        if (addToPhone && calendarId) {
-          const details = {
-            title: row.title.trim(),
-            startDate: row.start,
-            endDate: row.end,
-            location: row.location.trim(),
-          };
-          try {
-            const existing = row.action === 'update' ? events.find((event) => event.id === row.duplicateId) : undefined;
-            if (existing?.calendarEventId) {
-              await ExpoCalendar.updateEventAsync(existing.calendarEventId, details);
-              calendarEventId = existing.calendarEventId;
-            } else {
-              calendarEventId = await ExpoCalendar.createEventAsync(calendarId, details);
-            }
-          } catch {
-            calendarFailed = true;
-          }
-        }
-        const fields = {
-          title: row.title.trim(),
-          startTime: toOffsetISO(row.start),
-          endTime: toOffsetISO(row.end),
-          location: row.location.trim(),
-          childIds: row.childIds,
-          caregiverId: row.caregiverId,
-          icon: row.icon.trim(),
-          scanId,
-          calendarEventId,
-        };
         if (row.action === 'update' && row.duplicateId) {
+          let calendarEventId = '';
+          if (addToPhone && calendarId && !row.timeTbd) {
+            const details = {
+              title: row.title.trim(),
+              startDate: row.start,
+              endDate: row.end,
+              location: row.location.trim(),
+            };
+            try {
+              const existing = events.find((event) => event.id === row.duplicateId);
+              if (existing?.calendarEventId) {
+                await ExpoCalendar.updateEventAsync(existing.calendarEventId, details);
+                calendarEventId = existing.calendarEventId;
+              } else {
+                calendarEventId = await ExpoCalendar.createEventAsync(calendarId, details);
+              }
+            } catch {
+              calendarFailed = true;
+            }
+          }
           const patch: {
             title: string;
             startTime: string;
             endTime: string;
             location: string;
             scanId: string;
+            timeTbd: boolean;
             childIds?: string[];
             caregiverId?: string;
             icon?: string;
@@ -241,14 +237,46 @@ export default function CaptureScreen() {
             endTime: toOffsetISO(row.end),
             location: row.location.trim(),
             scanId,
+            timeTbd: row.timeTbd,
           };
           if (row.customChildren || allTouched.children) patch.childIds = row.childIds;
           if (row.customCaregiver || allTouched.caregiver) patch.caregiverId = row.caregiverId;
           if (row.customIcon || allTouched.icon) patch.icon = row.icon.trim();
           if (calendarEventId) patch.calendarEventId = calendarEventId;
           updateEventFields(row.duplicateId, patch);
-        } else {
-          addEvent(fields);
+          continue;
+        }
+        const duration = row.end.getTime() - row.start.getTime();
+        const span = duration > 0 ? duration : 60 * 60 * 1000;
+        const starts = row.repeat === 'weekly' && row.seriesUntil ? weeklyDates(row.start, row.seriesUntil) : [row.start];
+        for (const start of starts) {
+          if (findDuplicateId({ title: row.title, start }, events)) continue;
+          const end = new Date(start.getTime() + span);
+          let calendarEventId = '';
+          if (addToPhone && calendarId && !row.timeTbd) {
+            try {
+              calendarEventId = await ExpoCalendar.createEventAsync(calendarId, {
+                title: row.title.trim(),
+                startDate: start,
+                endDate: end,
+                location: row.location.trim(),
+              });
+            } catch {
+              calendarFailed = true;
+            }
+          }
+          addEvent({
+            title: row.title.trim(),
+            startTime: toOffsetISO(start),
+            endTime: toOffsetISO(end),
+            location: row.location.trim(),
+            childIds: row.childIds,
+            caregiverId: row.caregiverId,
+            icon: row.icon.trim(),
+            scanId,
+            calendarEventId,
+            timeTbd: row.timeTbd,
+          });
         }
       }
       if (calendarSkipped) Alert.alert('Calendar permission was not allowed. Events were saved in this app only.');
@@ -294,7 +322,7 @@ export default function CaptureScreen() {
     );
   }
 
-  const pending = rows.filter((row) => row.action !== 'skip');
+  const saveCount = rows.reduce((sum, row) => sum + rowSaveCount(row), 0);
 
   return (
     <ScrollView contentContainerStyle={styles.review} keyboardShouldPersistTaps="handled">
@@ -346,11 +374,34 @@ export default function CaptureScreen() {
                   childIds: row.childIds,
                   caregiverId: row.caregiverId,
                   icon: row.icon,
+                  timeTbd: row.timeTbd,
                 }}
                 caregivers={caregivers}
                 children={children}
                 onChange={(next) => changeFields(row, next)}
               />
+              {row.repeat === 'weekly' && (
+                <View>
+                  <Text style={styles.label}>Repeats weekly until</Text>
+                  <Pressable onPress={() => setUntilKey(row.key)} style={styles.pickerButton}>
+                    <Text>{(row.seriesUntil ?? row.start).toLocaleDateString()}</Text>
+                  </Pressable>
+                  {untilKey === row.key && (
+                    <DateTimePicker
+                      value={row.seriesUntil ?? row.start}
+                      mode="date"
+                      onChange={(event, picked) => {
+                        if (Platform.OS === 'android') setUntilKey(null);
+                        if (event.type === 'dismissed' || !picked) return;
+                        const until = new Date(row.seriesUntil ?? row.start);
+                        until.setFullYear(picked.getFullYear(), picked.getMonth(), picked.getDate());
+                        updateRow(row.key, { seriesUntil: until });
+                      }}
+                    />
+                  )}
+                  {untilKey === row.key && Platform.OS === 'ios' && <Button title="Done" onPress={() => setUntilKey(null)} />}
+                </View>
+              )}
               {!!row.rawText && <Text style={styles.raw}>{row.rawText}</Text>}
               {row.duplicateId ? (
                 <View>
@@ -359,6 +410,11 @@ export default function CaptureScreen() {
                     <Button title={row.action === 'skip' ? 'Skip (on)' : 'Skip'} onPress={() => updateRow(row.key, { action: 'skip' })} />
                     <Button title={row.action === 'update' ? 'Update (on)' : 'Update'} onPress={() => updateRow(row.key, { action: 'update' })} />
                   </View>
+                </View>
+              ) : row.timeTbd && row.confidence < 0.5 ? (
+                <View style={styles.choiceLine}>
+                  <Button title={row.action === 'skip' ? 'Skip (on)' : 'Skip'} onPress={() => updateRow(row.key, { action: 'skip' })} />
+                  <Button title={row.action === 'save' ? 'Save (on)' : 'Save'} onPress={() => updateRow(row.key, { action: 'save' })} />
                 </View>
               ) : null}
               {showRowErrors && problems.map((problem) => (
@@ -382,9 +438,9 @@ export default function CaptureScreen() {
       {addToPhone && Platform.OS === 'ios' && <Text style={styles.note}>New events use this iPhone's default calendar.</Text>}
 
       <Button
-        title={saving ? 'Saving…' : `Save ${pending.length} events`}
+        title={saving ? 'Saving…' : `Save ${saveCount} events`}
         onPress={() => void save()}
-        disabled={saving || pending.length === 0}
+        disabled={saving || saveCount === 0}
       />
     </ScrollView>
   );
@@ -413,15 +469,27 @@ function toReviewRow(
     customCaregiver: false,
     customIcon: false,
     duplicateId,
-    action: duplicateId ? 'skip' : 'save',
+    action: duplicateId || (draft.timeTbd && draft.confidence < 0.5) ? 'skip' : 'save',
+    timeTbd: draft.timeTbd === true,
+    repeat: draft.repeat,
+    seriesUntil: draft.seriesUntil ? new Date(draft.seriesUntil) : null,
   };
 }
 
 function withDuplicate(row: ReviewRow, events: { id: string; title: string; startTime: string }[]): ReviewRow {
   const duplicateId = findDuplicateId(row, events);
-  if (!duplicateId) return { ...row, duplicateId: '', action: 'save' };
-  if (row.duplicateId === duplicateId && (row.action === 'skip' || row.action === 'update')) return { ...row, duplicateId };
-  return { ...row, duplicateId, action: 'skip' };
+  if (duplicateId) {
+    if (row.duplicateId === duplicateId && (row.action === 'skip' || row.action === 'update')) return { ...row, duplicateId };
+    return { ...row, duplicateId, action: 'skip' };
+  }
+  if (row.timeTbd && row.confidence < 0.5 && row.action === 'skip') return { ...row, duplicateId: '' };
+  return { ...row, duplicateId: '', action: 'save' };
+}
+
+function rowSaveCount(row: ReviewRow): number {
+  if (row.action === 'skip') return 0;
+  if (row.action === 'update' || row.repeat !== 'weekly' || !row.seriesUntil) return 1;
+  return weeklyDates(row.start, row.seriesUntil).length;
 }
 
 function toggleId(ids: string[], id: string): string[] {

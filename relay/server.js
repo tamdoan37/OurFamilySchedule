@@ -15,7 +15,10 @@ const RATE_LIMIT = 120;
 const NEW_ROOMS_PER_HOUR = 10;
 const HOUR = 60 * 60 * 1000;
 const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-const PUSH_INTERVAL = 5 * 60 * 1000;
+const configuredInterval = Number(process.env.PUSH_INTERVAL_MS);
+const PUSH_INTERVAL = Number.isFinite(configuredInterval) && configuredInterval >= 1000
+  ? configuredInterval
+  : 5 * 60 * 1000;
 const allowedOrigins = (process.env.RELAY_CORS_ORIGINS || 'http://localhost:8081,http://localhost:19006')
   .split(',')
   .map((origin) => origin.trim())
@@ -52,11 +55,17 @@ db.exec(`
     push_token TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
     last_push_at INTEGER NOT NULL DEFAULT 0,
+    next_push_at INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (room_id, device_id)
   );
 `);
 try {
   db.exec('ALTER TABLE push_devices ADD COLUMN last_push_at INTEGER NOT NULL DEFAULT 0');
+} catch {
+  // Existing databases already have the column.
+}
+try {
+  db.exec('ALTER TABLE push_devices ADD COLUMN next_push_at INTEGER NOT NULL DEFAULT 0');
 } catch {
   // Existing databases already have the column.
 }
@@ -279,26 +288,16 @@ function isExpoToken(token) {
     && token.endsWith(']');
 }
 
-function notifyOthers(roomId, sender) {
-  const now = Date.now();
-  const rows = db.prepare(
-    'SELECT device_id, push_token, last_push_at FROM push_devices WHERE room_id = ?',
-  ).all(roomId);
-  const messages = [];
-  const mark = db.prepare(
-    'UPDATE push_devices SET last_push_at = ? WHERE room_id = ? AND device_id = ?',
-  );
-  for (const row of rows) {
-    if (row.device_id === sender || !isExpoToken(row.push_token)) continue;
-    if (now - (row.last_push_at || 0) < PUSH_INTERVAL) continue;
-    mark.run(now, roomId, row.device_id);
-    messages.push({
-      to: row.push_token,
-      _contentAvailable: true,
-      priority: 'high',
-      data: { kind: 'sync' },
-    });
-  }
+function silentPush(token) {
+  return {
+    to: token,
+    _contentAvailable: true,
+    priority: 'high',
+    data: { kind: 'sync' },
+  };
+}
+
+function sendPushes(messages) {
   if (messages.length === 0) return;
   void fetch(process.env.EXPO_PUSH_URL || 'https://exp.host/--/api/v2/push/send', {
     method: 'POST',
@@ -310,6 +309,48 @@ function notifyOthers(roomId, sender) {
   }).catch(() => {
     console.error('Could not send a wake-up push');
   });
+}
+
+function notifyOthers(roomId, sender) {
+  const now = Date.now();
+  const rows = db.prepare(
+    'SELECT device_id, push_token, last_push_at, next_push_at FROM push_devices WHERE room_id = ?',
+  ).all(roomId);
+  const messages = [];
+  const markSent = db.prepare(
+    'UPDATE push_devices SET last_push_at = ?, next_push_at = 0 WHERE room_id = ? AND device_id = ?',
+  );
+  const markDue = db.prepare(
+    'UPDATE push_devices SET next_push_at = ? WHERE room_id = ? AND device_id = ? AND next_push_at = 0',
+  );
+  for (const row of rows) {
+    if (row.device_id === sender || !isExpoToken(row.push_token)) continue;
+    if (now - (row.last_push_at || 0) < PUSH_INTERVAL) {
+      if (!row.next_push_at) markDue.run((row.last_push_at || 0) + PUSH_INTERVAL, roomId, row.device_id);
+      continue;
+    }
+    markSent.run(now, roomId, row.device_id);
+    messages.push(silentPush(row.push_token));
+  }
+  sendPushes(messages);
+}
+
+function deliverDuePushes() {
+  const now = Date.now();
+  const rows = db.prepare(
+    'SELECT room_id, device_id, push_token FROM push_devices WHERE next_push_at > 0 AND next_push_at <= ?',
+  ).all(now);
+  if (rows.length === 0) return;
+  const mark = db.prepare(
+    'UPDATE push_devices SET last_push_at = ?, next_push_at = 0 WHERE room_id = ? AND device_id = ? AND next_push_at > 0 AND next_push_at <= ?',
+  );
+  const messages = [];
+  for (const row of rows) {
+    const updated = mark.run(now, row.room_id, row.device_id, now);
+    if (!updated.changes || !isExpoToken(row.push_token)) continue;
+    messages.push(silentPush(row.push_token));
+  }
+  sendPushes(messages);
 }
 
 const server = http.createServer(app);
@@ -349,6 +390,7 @@ io.on('connection', (socket) => {
 
 cleanup();
 setInterval(cleanup, 60 * 60 * 1000).unref();
+setInterval(deliverDuePushes, 1000).unref();
 
 server.listen(PORT, () => {
   console.log(`Relay listening on :${PORT}`);

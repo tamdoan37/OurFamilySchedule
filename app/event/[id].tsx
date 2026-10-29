@@ -83,6 +83,7 @@ function toDraft(event: AppEvent): EventDraftFields {
     childIds: [...event.childIds],
     caregiverId: event.caregiverId,
     icon: event.icon,
+    timeTbd: event.timeTbd,
   };
 }
 
@@ -95,6 +96,7 @@ function changedFields(original: AppEvent, draft: EventDraftFields) {
     childIds?: string[];
     caregiverId?: string;
     icon?: string;
+    timeTbd?: boolean;
   } = {};
   if (draft.title.trim() !== original.title) patch.title = draft.title.trim();
   if (draft.start.getTime() !== new Date(original.startTime).getTime()) patch.startTime = toOffsetISO(draft.start);
@@ -105,6 +107,7 @@ function changedFields(original: AppEvent, draft: EventDraftFields) {
   }
   if (draft.caregiverId !== original.caregiverId) patch.caregiverId = draft.caregiverId;
   if (draft.icon.trim() !== original.icon) patch.icon = draft.icon.trim();
+  if ((draft.timeTbd === true) !== original.timeTbd) patch.timeTbd = draft.timeTbd === true;
   return patch;
 }
 

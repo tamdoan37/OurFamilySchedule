@@ -24,12 +24,34 @@ public class ScheduleParserModule: Module {
     let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
     try handler.perform([request])
     let observations = request.results ?? []
-    let sorted = observations.sorted { lhs, rhs in
-      let delta = lhs.boundingBox.midY - rhs.boundingBox.midY
-      if abs(delta) > 0.015 { return delta > 0 }
-      return lhs.boundingBox.minX < rhs.boundingBox.minX
+    let lines: [(text: String, midY: CGFloat, minX: CGFloat, height: CGFloat)] = observations.compactMap { observation in
+      guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
+            !text.isEmpty else { return nil }
+      let box = observation.boundingBox
+      return (text, box.midY, box.minX, max(box.height, 0.01))
     }
-    return sorted.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    let sorted = lines.sorted { lhs, rhs in
+      if abs(lhs.midY - rhs.midY) > 0.0001 { return lhs.midY > rhs.midY }
+      return lhs.minX < rhs.minX
+    }
+    var rows: [[(text: String, midY: CGFloat, minX: CGFloat, height: CGFloat)]] = []
+    for line in sorted {
+      if let row = rows.last {
+        let count = CGFloat(row.count)
+        let averageY = row.reduce(CGFloat(0)) { $0 + $1.midY } / count
+        let averageH = row.reduce(CGFloat(0)) { $0 + $1.height } / count
+        if abs(line.midY - averageY) <= 0.6 * averageH {
+          var next = row
+          next.append(line)
+          rows[rows.count - 1] = next
+          continue
+        }
+      }
+      rows.append([line])
+    }
+    return rows.map { row in
+      row.sorted { $0.minX < $1.minX }.map { $0.text }.joined(separator: " | ")
+    }.joined(separator: "\n")
   }
 
   static func structure(text: String, prompt: String) async -> (String, String) {
@@ -79,7 +101,7 @@ struct ScheduleDraftList {
 struct ScheduleDraftItem {
   @Guide(description: "Opponent or title copied from the same row")
   var title: String
-  @Guide(description: "Start as ISO 8601. If the year is missing, the next upcoming date.")
+  @Guide(description: "Start as ISO 8601. If a weekday is named, use the year where that date falls on it. Otherwise the next upcoming date, keeping dates up to 60 days in the past.")
   var start: String
   @Guide(description: "End as ISO 8601. One hour after the start when the row has no end. Same as start when the time is TBD.")
   var end: String
